@@ -2,20 +2,22 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
-## 1.87.7
+## 1.88.0
 
-### Fixed
+### Added
 
-- **Evenings stop being filed under tomorrow.** Every date the plugin wrote was the date in Greenwich, so from early evening onward — seven at night in New York, nine in Chicago, five on the west coast — a note named itself for a day that had not started yet. A meeting recorded on Saturday night was called Sunday's, sorted ahead of Sunday morning, and sat outside the week that was supposed to contain it; the same hour shifted `date` in the properties, the weekly digest's span, the morning briefing's horizon, the seven-day windows behind "recently", and the timestamp on a recording's filename. All of them now read the day off the local clock. The relative ones count days along the calendar instead of subtracting twenty-four hours at a time, so the two mornings a year the clocks move no longer push a boundary onto the wrong date. The one place still working in UTC is the calendar fetch, which hands Microsoft an exact moment rather than a day, and is right to.
-
-Notes written before this are unchanged — a note dated a day ahead keeps the date it was given, since only you know which of them were late nights.
-
-## 1.87.6
+- **A fresh install says it needs setting up, once.** Nothing here transcribes or extracts without a transcription provider or an AI model, and an install with neither gave no sign of it until the first capture failed — which teaches the same lesson at the worst possible moment, since by then the meeting has already happened. A new install now says so at load, with a link straight to the setup tab. Said once and never again: the notice records that it has been shown, and an install that has either a provider or a model never sees it.
+- **The ribbon icons can be turned off.** Four icons on a strip shared with every other plugin is a lot to claim, and not everyone wants all of them. Each can now be switched off under Ribbon icons in settings: the microphone, the calendar, the sunrise, the sparkles. Turning one off hides only the icon — its command still works, so nothing becomes unreachable. The strip updates as you flip each toggle rather than at the next reload.
 
 ### Fixed
 
 - **A post that is all video no longer becomes a note about nothing.** X appends a link to its own media to the end of every post carrying a photo or video, so a post with no words of its own arrives looking like a one-line post whose line is a link. Capture read the link as the post's text, sent it off to be summarized, and filed the model's reply — that it cannot summarize a URL — under the heading where the summary belongs. Those links are now recognized for what they are (in both spellings: the real `t.co` address the embed reports, and the `pic.x.com` display form oEmbed renders), and a post left with no words is treated as having none. Nothing to summarize now means nothing is asked, so a refusal can no longer land in a note. The same reading applies to a quoted or replied-to post, which used to be able to contribute a bare link as context.
 - **And it says which program would have captured it.** A wordless video post is not an empty post: its words are in its audio, and yt-dlp is what fetches audio. Capture now says that, names yt-dlp, and stops, rather than writing a note that will have to be deleted. When yt-dlp is installed, that post captures the way it always should have. The check happens before a folder or a filename is worked out, so the message is about the post rather than about a note that does not exist.
+- **Evenings stop being filed under tomorrow.** Every date the plugin wrote was the date in Greenwich, so from early evening onward — seven at night in New York, nine in Chicago, five on the west coast — a note named itself for a day that had not started yet. A meeting recorded on Saturday night was called Sunday's, sorted ahead of Sunday morning, and sat outside the week that was supposed to contain it; the same hour shifted `date` in the properties, the weekly digest's span, the morning briefing's horizon, the seven-day windows behind "recently", and the timestamp on a recording's filename. All of them now read the day off the local clock. The relative ones count days along the calendar instead of subtracting twenty-four hours at a time, so the two mornings a year the clocks move no longer push a boundary onto the wrong date. The one place still working in UTC is the calendar fetch, which hands Microsoft an exact moment rather than a day, and is right to. Notes written before this are unchanged: a note dated a day ahead keeps the date it was given, since only you know which of them were late nights.
+
+### Changed
+
+- **Em dashes out of the notices.** A handful of user-facing messages set their clauses apart with an em dash where a colon says the same thing more plainly.
 
 ## 1.87.1
 
