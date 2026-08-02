@@ -112,6 +112,21 @@ const withTimeout = <T>(p: Promise<T>, ms: number) => {
 	void p.catch(() => {}); // a rejection after the race is lost must not go unhandled
 	return Promise.race([p, new Promise<"pcap-timeout">((res) => setTimeout(() => res("pcap-timeout"), ms))]);
 };
+
+/** How long to allow for reading or writing `bytes` of recorded audio.
+ *
+ *  One fixed budget cannot cover both a two-minute voice memo and a three-hour
+ *  meeting. A flat 10 seconds was well under what a 60 MB recording needs on a
+ *  vault that lives inside a synced folder, so a perfectly healthy write was
+ *  abandoned as "failed" while its bytes were still landing: the capture was
+ *  reported lost, and the half-written file it left behind is exactly what a
+ *  vault syncer picks up and uploads as though it were whole.
+ *
+ *  Sized for a slow disk rather than an SSD, with a floor for small files.
+ *  Being generous only costs a longer teardown on a write that really is
+ *  wedged, and that path still ends in the partial-file recovery, so the audio
+ *  survives either way. Being mean costs the recording. */
+const audioIoBudgetMs = (bytes: number) => Math.max(30_000, Math.ceil(bytes / (1024 * 1024)) * 3_000);
 /** Wall-clock time of an epoch-ms instant, e.g. "2:47 PM". */
 const clockTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -1973,15 +1988,16 @@ export default class PowerAssistantPlugin extends Plugin {
 				// hang the teardown (the partial still holds the audio). On a gen
 				// mismatch, leave directProcess alone: the force path that superseded
 				// this run may have claimed the same path for its own recovery write.
-				const buf = await withTimeout(blob.arrayBuffer(), 10_000);
+				const buf = await withTimeout(blob.arrayBuffer(), audioIoBudgetMs(blob.size));
 				if (gen !== this.sessionGen) return;
 				if (buf === "pcap-timeout") {
 					this.directProcess.delete(path); // nothing was written, nothing to consume
 					throw new Error("timed out reading the recorded audio");
 				}
 				let created: TFile | "pcap-timeout";
+				const writing = this.app.vault.createBinary(path, buf);
 				try {
-					created = await withTimeout(this.app.vault.createBinary(path, buf), 10_000);
+					created = await withTimeout(writing, audioIoBudgetMs(buf.byteLength));
 				} catch (e) {
 					// no create event will consume it (unless a force path owns it now)
 					if (gen === this.sessionGen) this.directProcess.delete(path);
@@ -1990,7 +2006,14 @@ export default class PowerAssistantPlugin extends Plugin {
 				if (gen !== this.sessionGen) return;
 				if (created === "pcap-timeout") {
 					// keep the directProcess entry: the write may still land late, and
-					// the entry stops its create event from auto-making a stray note
+					// the entry stops its create event from auto-making a stray note.
+					//
+					// Losing the race does not cancel the write, so do not simply walk
+					// away from it: what is on disk right now is a fragment, and a vault
+					// syncer reading it mid-write would upload it as though it were the
+					// whole recording. Follow it to its end and clear the fragment if it
+					// never completes; the partial file still holds the audio either way.
+					void writing.catch(() => this.app.vault.adapter.remove(path).catch(() => {}));
 					throw new Error("timed out writing the recording file");
 				}
 				this.parts.push({ path, offsetMs });
@@ -2635,15 +2658,22 @@ export default class PowerAssistantPlugin extends Plugin {
 				// answer arrives after this create event has already fired
 				if (s.target || s.ask) this.directProcess.add(dest);
 					let made: TFile | "pcap-timeout";
+					const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+					const writing = this.app.vault.createBinary(dest, bytes);
 					try {
-						made = await withTimeout(this.app.vault.createBinary(dest, data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)), 10_000);
+						made = await withTimeout(writing, audioIoBudgetMs(bytes.byteLength));
 					} catch (e) {
 						this.directProcess.delete(dest); // the write failed outright; nothing will land
 						throw e;
 					}
 					// on timeout, keep the directProcess entry: a write landing late
-					// must not auto-make a stray note
-					if (made === "pcap-timeout") throw new Error("timed out writing the recovered audio");
+					// must not auto-make a stray note. The write itself carries on, so
+					// clear the fragment if it never finishes rather than leaving a
+					// part-written recording where a syncer can mistake it for whole.
+					if (made === "pcap-timeout") {
+						void writing.catch(() => this.app.vault.adapter.remove(dest).catch(() => {}));
+						throw new Error("timed out writing the recovered audio");
+					}
 					parts.push({ path: dest, offsetMs: snap.offsetMs });
 				}
 				try {
