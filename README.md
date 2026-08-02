@@ -2,6 +2,10 @@
 
 Capture meetings, voice memos, and any audio into structured Obsidian notes. Record in the app (desktop and mobile) or drop audio files into a watch folder; Power Assistant transcribes them and uses AI to produce a note with the sections you choose: Summary, Action items (dashboard-ready task lines, or a table), Decisions, Risks & blockers, and Questions. Every note also carries named attendees, clickable timestamps, carried-over items from the previous meeting in the series, the raw transcript, and an embed of the original audio.
 
+![A captured meeting note: properties carrying attendees, duration, speaker count and model, then an AI written summary, action items with an owner and a due date each, and open questions](docs/images/capture-note.png)
+
+One recording in, one note out. The properties carry the attendees, the run time, how many speakers were heard, and which model wrote it. Action items come out as real task lines with an owner and a date, so they roll up in any dashboard that reads tasks.
+
 ## Setup
 
 1. **Transcription**: four providers, each with a test button. *Whisper*, any OpenAI-compatible endpoint: Groq (default, fast and cheap), OpenAI, or a self-hosted Whisper server on your LAN; no speaker labels. *AssemblyAI* and *Deepgram* both add **speaker labels** (Speaker A / Speaker B), record a `speakers` count, and let extracted action items attribute who said what; Deepgram starts new accounts with free credit. *WhisperX* is speaker labels **from your own machine**: the server ships inside the plugin, and **Show install steps** in its settings section gives you the one command that sets it up, GPU-matched, with start-at-login (a CUDA box is ideal); meetings then diarize with no cloud provider and no audio leaving your network. **Detect local AI** in the AI model section finds a running Ollama or WhisperX server and fills in the addresses. Rates are not listed here on purpose, since a number baked into a plugin goes stale without anyone noticing: check each provider's own pricing page, and use the built-in AI usage meter for what this vault is actually spending.
@@ -46,6 +50,11 @@ Already connected from before **Email this page** existed? That connection agree
 - **Timestamps**: AssemblyAI transcripts are speaker-labeled AND timestamped (`**Speaker A [12:34]:** …`), so long meetings are scannable and audio-jump has anchors to land on.
 
 ## Meeting intelligence
+
+![A transcript with each turn labeled by a colored speaker chip, a clickable timestamp, and the speaker's real name](docs/images/transcript.png)
+
+Each turn carries a colored chip, a clickable timestamp that seeks the audio, and the
+person's real name rather than Speaker A.
 
 - **Click a stamp, hear the moment.** In Reading view, every `[12:34]` stamp in a capture note is a link: clicking it seeks the embedded audio to that second and plays. Works in the transcript, in Moments, anywhere in the note.
 - **Real names, not Speaker A.** After a diarized transcription, Claude reads the words for self-introductions and addressing patterns, proposes who each speaker is, and a small dialog lets you confirm or fix the guesses (an empty box keeps the letter). Named attendees become wiki-links in the note's properties, and the transcript labels are rewritten. Nothing is ever guessed from outside the transcript.
