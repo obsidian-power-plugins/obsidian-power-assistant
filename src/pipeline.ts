@@ -4465,7 +4465,7 @@ export function buildFinancesRollup(docs: FinanceDoc[], today: string): string {
 	const group = (keyOf: (x: FinanceDoc) => string, heading: string, label: string, sortDesc = true) => {
 		const g = new Map<string, { key: string; cur: string; total: number; n: number }>();
 		for (const x of withAmt) {
-			const k = `${keyOf(x)} ${x.currency}`;
+			const k = `${keyOf(x)}\u0000${x.currency}`;
 			const e = g.get(k) ?? { key: keyOf(x), cur: x.currency, total: 0, n: 0 };
 			e.total += x.amount;
 			e.n++;
