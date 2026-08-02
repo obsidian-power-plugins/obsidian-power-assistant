@@ -1292,15 +1292,39 @@ export function isXUrl(url: string): boolean {
 	return xStatusId(url) !== null;
 }
 
+/** What a post says once the link shorteners are taken out, which is the test
+ *  for whether it says anything at all. X appends a t.co link to the text of
+ *  every post carrying a photo or video, so a post that is all video arrives as
+ *  a bare link: not empty, and not words either. Empty here means there is
+ *  nothing to title a note with, nothing to summarize, and nothing to send a
+ *  model — which answers a bare URL by saying it cannot summarize a URL.
+ *
+ *  Both spellings of that link have to go. The embed payload carries the real
+ *  t.co URL; oEmbed renders the same link with its display text, `pic.x.com/…`,
+ *  which has no scheme and would otherwise read as a word. */
+export function postWords(text: string): string {
+	return (text || "")
+		.replace(/(?:https?:\/\/)?(?:t\.co|pic\.(?:x|twitter)\.com)\/\w+/gi, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/** Whether there is anything here to write notes about, as opposed to a link
+ *  and some punctuation. The guard exists because of what happens without it: a
+ *  model asked to summarize a bare URL replies that it cannot summarize a URL,
+ *  politely and at length, and that reply lands in the note under **Summary**
+ *  where the summary should be. Nothing to extract from is not a failure worth
+ *  reporting either — it just means the captured text is the whole note. */
+export function hasWordsToExtract(text: string): boolean {
+	return /[\p{L}\p{N}]/u.test((text || "").replace(/https?:\/\/\S+/g, " "));
+}
+
 /** Post text trimmed down to a note title: link-shortener trackers carry no
  *  meaning, newlines would break the filename, and a long post has to stop
  *  somewhere, so it is cut at a word boundary. Falls back when a post is all
  *  video and no words. */
 export function postTitleFromText(text: string, fallback: string): string {
-	let t = (text || "")
-		.replace(/https?:\/\/t\.co\/\w+/g, "")
-		.replace(/\s+/g, " ")
-		.trim();
+	let t = postWords(text);
 	if (!t) return fallback;
 	if (t.length > 90) {
 		const cut = t.slice(0, 90);
@@ -1628,22 +1652,43 @@ export interface TweetEmbedBase {
 	text?: string;
 	created_at?: string;
 	user?: { name?: string; screen_name?: string };
+	/** Where X names the t.co links it appended itself, one per photo or video.
+	 *  Having them named is what separates them from a link the author typed:
+	 *  these point back at the post and say nothing, that one is the point. */
+	entities?: { media?: { url?: string }[] };
 }
 
 export interface TweetEmbed extends TweetEmbedBase {
 	favorite_count?: number;
 	conversation_count?: number;
+	/** Present when the post carries video. A post with no words that has one is
+	 *  a capture waiting on yt-dlp, not an empty post, and the two are worth
+	 *  telling apart when explaining why nothing was captured. */
+	video?: { durationMs?: number };
 	/** The post this one quotes. */
 	quoted_tweet?: TweetEmbedBase;
 	/** The post this one answers, when the capture target is itself a reply. */
 	parent?: TweetEmbedBase;
 }
 
+/** A post's own words, with the links X appended for its own media removed.
+ *  Empty when the post is media and nothing else — see `postWords`. A link the
+ *  author actually typed is not in `entities.media` and survives. */
+export function tweetOwnText(t: TweetEmbedBase | undefined): string {
+	let s = t?.text ?? "";
+	for (const m of t?.entities?.media ?? []) if (m.url) s = s.split(m.url).join("");
+	s = s
+		.replace(/[ \t]+/g, " ")
+		.replace(/ ?\n ?/g, "\n")
+		.trim();
+	return postWords(s) ? s : "";
+}
+
 /** A quoted or replied-to post as an attributed Markdown blockquote, or null
  *  when there is nothing there. The attribution matters as much as the words:
  *  a note has to say whose sentence it is quoting. */
 export function quotedBlock(t: TweetEmbedBase | undefined, lead: string): string | null {
-	const text = (t?.text ?? "").trim();
+	const text = tweetOwnText(t);
 	if (!text) return null;
 	const name = (t?.user?.name ?? "").trim();
 	const handle = (t?.user?.screen_name ?? "").trim();
@@ -1655,17 +1700,32 @@ export function quotedBlock(t: TweetEmbedBase | undefined, lead: string): string
 	return `${lead}${who ? ` ${who}` : ""}:\n\n${body}`;
 }
 
+/** A post read from the embed payload: its words, the properties a note keeps,
+ *  and whether there is video behind them. */
+export interface TweetRead {
+	/** Empty when the post is media and carries no words of its own. */
+	text: string;
+	info: MediaInfo;
+	/** Only the embed payload knows this; oEmbed does not say. */
+	hasVideo?: boolean;
+}
+
 /** A post's words plus the context that makes them mean something.
  *
  *  The parts read in the order the conversation happened: what was being
  *  answered, then the post itself, then whatever it holds up to look at. The
  *  title comes from the post's OWN words, never the context, so a note is filed
- *  under what its author said rather than under what they were quoting. */
-export function parseTweetEmbed(j: TweetEmbed): { text: string; info: MediaInfo } | null {
-	const own = (j.text ?? "").trim();
+ *  under what its author said rather than under what they were quoting.
+ *
+ *  A post with no words at all still returns, with empty text: the payload named
+ *  its author and counted its likes, so it was read, and reporting it unread
+ *  would send the caller off to fetch x.com as a web page, which answers a
+ *  logged-out reader with nothing. Null is for a payload that carries no post. */
+export function parseTweetEmbed(j: TweetEmbed): TweetRead | null {
+	const own = tweetOwnText(j);
 	const parent = quotedBlock(j.parent, "In reply to");
 	const quoted = quotedBlock(j.quoted_tweet, "Quoting");
-	if (!own && !parent && !quoted) return null;
+	if (!own && !parent && !quoted && !(j.text ?? "").trim() && !j.user) return null;
 	const text = [parent, own, quoted].filter(Boolean).join("\n\n");
 	const author = (j.user?.name ?? "").trim();
 	const handle = (j.user?.screen_name ?? "").trim();
@@ -1679,7 +1739,9 @@ export function parseTweetEmbed(j: TweetEmbed): { text: string; info: MediaInfo 
 	if (/^\d{4}-\d{2}-\d{2}$/.test(posted)) info.posted = posted;
 	if (typeof j.favorite_count === "number") info.likes = j.favorite_count;
 	if (typeof j.conversation_count === "number") info.replies = j.conversation_count;
-	return { text, info };
+	const read: TweetRead = { text, info };
+	if (j.video) read.hasVideo = true;
+	return read;
 }
 
 /** X's public oEmbed endpoint.
@@ -1716,15 +1778,21 @@ export function isoFromLongDate(s: string): string | undefined {
 /** A post's own words out of an oEmbed reply, for the posts yt-dlp refuses.
  *  The text is the blockquote's paragraph, where <br> carries the line breaks;
  *  the date survives only as the trailing anchor's label. Null when the reply
- *  carries no post. */
-export function parseTweetOembed(j: TweetOembed): { text: string; info: MediaInfo } | null {
+ *  carries no post.
+ *
+ *  This reply does not name which links X appended for the post's own media, so
+ *  a paragraph that is nothing but links reads as wordless whichever kind they
+ *  were — which is the right answer either way, since a note cannot be written
+ *  about a bare link. */
+export function parseTweetOembed(j: TweetOembed): TweetRead | null {
 	const html = j.html ?? "";
 	const p = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
 	if (!p) return null;
-	const text = decodeXmlEntities(p[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""))
+	const raw = decodeXmlEntities(p[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""))
 		.replace(/[ \t]+\n/g, "\n")
 		.trim();
-	if (!text) return null;
+	if (!raw) return null;
+	const text = postWords(raw) ? raw : "";
 	const author = (j.author_name ?? "").trim();
 	const handle = (j.author_url ?? "").match(/(?:twitter|x)\.com\/([A-Za-z0-9_]+)/i)?.[1] ?? html.match(/\(@([A-Za-z0-9_]+)\)/)?.[1] ?? "";
 	const info: MediaInfo = { title: postTitleFromText(text, handle ? `Post from @${handle}` : "Post"), site: "X" };
@@ -5144,6 +5212,47 @@ export function allTemplates(custom: { name: string; sections: string[] }[] | un
 		.filter((c) => c.name.trim())
 		.map((c) => ({ id: `c:${c.name.trim()}`, name: c.name.trim(), sections: c.sections.filter((s) => valid.has(s)) as ExtractionKey[] }));
 	return [...TEMPLATES, ...customValid];
+}
+
+/* ---------------- what day it is, where the user is ---------------- */
+
+/** The calendar day a moment fell on, as YYYY-MM-DD, read off the local clock.
+ *
+ *  Not `toISOString().slice(0, 10)`, which is the day in UTC. West of Greenwich
+ *  that is already tomorrow for the last hours of every evening, so a note taken
+ *  at nine at night was filed under tomorrow's date: named for a day that had
+ *  not started, sorted ahead of the morning that preceded it, and outside a
+ *  "this week" window that had not reached it yet. A vault records a person's
+ *  days, and a person's day ends when they say it does.
+ *
+ *  A timestamp being compared against something else in UTC is a different
+ *  question and keeps `toISOString`: this is for the days people name. */
+export function dayOf(d: Date): string {
+	const p = (n: number) => String(n).padStart(2, "0");
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Today, where the user is. */
+export function today(): string {
+	return dayOf(new Date());
+}
+
+/** The local day `days` before today (negative counts forward), as YYYY-MM-DD.
+ *
+ *  Stepped along the calendar rather than by subtracting milliseconds, because
+ *  a day is not always 86,400,000 of them: on the two mornings a year the clocks
+ *  move, "seven days ago" computed by arithmetic lands an hour off and can name
+ *  the wrong date. Asking the calendar to count days gets the days right. */
+export function daysAgo(days: number, from = new Date()): string {
+	const d = new Date(from.getTime());
+	d.setDate(d.getDate() - Math.round(days));
+	return dayOf(d);
+}
+
+/** The local time as HH-MM-SS, for a filename whose day comes from `dayOf`. */
+export function clockOf(d: Date): string {
+	const p = (n: number) => String(n).padStart(2, "0");
+	return `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }
 
 /** ISO-8601 week key ("2026-W28") for a YYYY-MM-DD date; the auto-digest uses

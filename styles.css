@@ -1574,3 +1574,8 @@ textarea.pcap-template-area {
 .metadata-property[data-property-key="pa-parts"] {
 	display: none;
 }
+
+/* A ribbon icon the user turned off in settings. */
+.pa-ribbon-hidden {
+	display: none;
+}

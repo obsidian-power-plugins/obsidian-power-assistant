@@ -248,6 +248,12 @@ import {
 	xSyndicationUrl,
 	parseTweetEmbed,
 	TweetEmbed,
+	TweetRead,
+	hasWordsToExtract,
+	dayOf,
+	today,
+	daysAgo,
+	clockOf,
 	ytDlpInvocations,
 	ytDlpInfoArgs,
 	ytDlpAudioArgs,
@@ -656,6 +662,16 @@ interface PowerAssistantSettings {
 	graphRefresh: string;
 	graphAccess: string;
 	graphExpiry: number;
+	/** Whether the one-time "this needs setting up" nudge has been shown.
+	 *  Nothing here transcribes or extracts without a provider or a model, and
+	 *  a fresh install gave no sign of that until the first capture failed. */
+	setupNudged: boolean;
+	/** Which ribbon icons this plugin claims. Four is a lot of one shared
+	 *  strip, so each can be turned off; its command always remains. */
+	ribbonRecord: boolean;
+	ribbonMeeting: boolean;
+	ribbonBriefing: boolean;
+	ribbonAssistant: boolean;
 }
 
 const DEFAULT_SETTINGS: PowerAssistantSettings = {
@@ -783,6 +799,11 @@ const DEFAULT_SETTINGS: PowerAssistantSettings = {
 	graphRefresh: "",
 	graphAccess: "",
 	graphExpiry: 0,
+	setupNudged: false,
+	ribbonRecord: true,
+	ribbonMeeting: true,
+	ribbonBriefing: true,
+	ribbonAssistant: true,
 };
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -898,6 +919,8 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  and clickable to force a sweep while something does. */
 	private queueStatusEl: HTMLElement | null = null;
 	private ribbon!: HTMLElement;
+	/** The ribbon icons, so hiding one is immediate rather than a reload. */
+	private ribbonEls: Partial<Record<"record" | "meeting" | "briefing" | "assistant", HTMLElement>> = {};
 	/** Recording session state: parts, marks, and the crash-safe partial. */
 	private recStream: MediaStream | null = null;
 	private recStamp = "";
@@ -1017,7 +1040,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			name: "Show running version",
 			callback: () => new Notice(`Power Assistant: running build ${PC_BUILD} (disk says ${this.manifest.version}).`, 8000),
 		});
-		this.addRibbonIcon("calendar-plus", "Power Assistant: new meeting note", () => new NewMeetingModal(this.app, this).open());
+		this.ribbonEls.meeting = this.addRibbonIcon("calendar-plus", "Power Assistant: new meeting note", () => new NewMeetingModal(this.app, this).open());
 		this.addCommand({ id: "new-meeting-note", icon: "file-plus", name: "New meeting note…", callback: () => new NewMeetingModal(this.app, this).open() });
 		this.addCommand({ id: "import-from-calendar", icon: "calendar", name: "Import meeting from calendar (Microsoft 365)…", callback: () => void this.importFromCalendar() });
 		this.addCommand({
@@ -1214,7 +1237,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				input.onchange = () => {
 					const f = input.files?.[0];
 					if (!f) return;
-					const date = new Date(f.lastModified).toISOString().slice(0, 10);
+					const date = dayOf(new Date(f.lastModified));
 					void f.text().then((t) => this.importTranscript(f.name, t, date));
 				};
 				input.click();
@@ -1373,7 +1396,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		});
 		this.addCommand({ id: "weekly-digest", icon: "calendar-days", name: "Weekly meeting digest", callback: () => void this.weeklyDigest() });
 		this.addCommand({ id: "morning-briefing", icon: "sunrise", name: "Morning briefing", callback: () => void this.morningBriefing() });
-		this.addRibbonIcon("sunrise", "Power Assistant: morning briefing", () => void this.morningBriefing());
+		this.ribbonEls.briefing = this.addRibbonIcon("sunrise", "Power Assistant: morning briefing", () => void this.morningBriefing());
 		this.addCommand({ id: "create-meetings-base", icon: "database", name: "Create the Meetings base", callback: () => void this.createMeetingsBase() });
 		this.addCommand({ id: "finances-rollup", icon: "dollar-sign", name: "Finances rollup", callback: () => void this.financesRollup() });
 		this.addCommand({ id: "create-finances-base", icon: "database", name: "Create the Finances base", callback: () => void this.createFinancesBase() });
@@ -1392,7 +1415,11 @@ export default class PowerAssistantPlugin extends Plugin {
 				return true;
 			},
 		});
-		this.addRibbonIcon("sparkles", "Power Assistant: open the assistant", () => void this.openAssistant());
+		this.ribbonEls.assistant = this.addRibbonIcon("sparkles", "Power Assistant: open the assistant", () => void this.openAssistant());
+		this.ribbonEls.record = this.ribbon;
+		this.applyRibbonVisibility();
+		// after the UI exists, so the notice's "Open setup" link has a tab to open
+		this.app.workspace.onLayoutReady(() => this.nudgeSetupOnce());
 
 		// [m:ss] stamps in capture notes seek the embedded audio on click, and
 		// unnamed "Speaker X" labels open the rename dialog (the Otter gesture)
@@ -1477,7 +1504,7 @@ export default class PowerAssistantPlugin extends Plugin {
 							.onClick(() =>
 								void this.app.vault
 									.read(af)
-									.then((t) => this.importTranscript(af.name, t, new Date(af.stat.ctime).toISOString().slice(0, 10)))
+									.then((t) => this.importTranscript(af.name, t, dayOf(new Date(af.stat.ctime))))
 							)
 					);
 					return;
@@ -1789,7 +1816,9 @@ export default class PowerAssistantPlugin extends Plugin {
 			this.flushChain = Promise.resolve();
 			this.recMime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
 			this.recExt = this.recMime.includes("mp4") ? "m4a" : this.recMime.includes("ogg") ? "ogg" : "webm";
-			this.recStamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+			// a recording is named for the evening it was made, not for the next
+			// morning in Greenwich
+			this.recStamp = ((d) => `${dayOf(d)}-${clockOf(d)}`)(new Date());
 			this.recStart = Date.now();
 			// only a bare mic-button session asks where to file; recordings started
 			// from a meeting note already know exactly where they are going
@@ -1833,7 +1862,7 @@ export default class PowerAssistantPlugin extends Plugin {
 					10000
 				);
 		} catch (e) {
-			new Notice("Power Assistant: microphone unavailable — " + (e instanceof Error ? e.message : String(e)));
+			new Notice("Power Assistant: microphone unavailable: " + (e instanceof Error ? e.message : String(e)));
 		}
 	}
 
@@ -2322,7 +2351,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 			if (!offsets || parts.length < 2 || parts.length !== offsets.length) continue; // parts still syncing
 			const title = af.basename.replace(/\.part1$/, "");
-			const notePath = normalizePath(`${this.settings.outputFolder}/${renderFilename(this.settings.filenameTemplate, title, new Date().toISOString().slice(0, 10))}`);
+			const notePath = normalizePath(`${this.settings.outputFolder}/${renderFilename(this.settings.filenameTemplate, title, today())}`);
 			if (!(await this.claimByStub(notePath, this.settings.outputFolder))) continue;
 			if (await this.processParts(parts, offsets)) {
 				worked++;
@@ -2344,7 +2373,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 			if (Date.now() - af.stat.mtime > ORPHAN_HORIZON_MS) continue;
 			if (this.inFlight.has(af.path) || this.audioLinked(af.path)) continue;
-			const notePath = normalizePath(`${this.settings.outputFolder}/${renderFilename(this.settings.filenameTemplate, af.basename, new Date().toISOString().slice(0, 10))}`);
+			const notePath = normalizePath(`${this.settings.outputFolder}/${renderFilename(this.settings.filenameTemplate, af.basename, today())}`);
 			const existing = this.app.vault.getAbstractFileByPath(notePath);
 			if (existing instanceof TFile && this.stubState(existing) !== "stale") continue; // finished, failed, or someone's live claim
 			await this.process(af, undefined, true); // claims its own stub inside
@@ -2398,7 +2427,7 @@ export default class PowerAssistantPlugin extends Plugin {
 					else blocked.push({ name: af.name, reason: "a rotated recording with no sidecar; nothing can stitch its parts" });
 					continue;
 				}
-				const notePath = normalizePath(`${this.settings.outputFolder}/${renderFilename(this.settings.filenameTemplate, af.basename, new Date().toISOString().slice(0, 10))}`);
+				const notePath = normalizePath(`${this.settings.outputFolder}/${renderFilename(this.settings.filenameTemplate, af.basename, today())}`);
 				const existing = this.app.vault.getAbstractFileByPath(notePath);
 				const stub = existing instanceof TFile ? this.stubState(existing) : null;
 				// a failed stub is the same item the note half already declined,
@@ -2652,7 +2681,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		/** Bulk imports pass false to create quietly without opening each note. */
 		open?: boolean;
 	}): Promise<TFile> {
-		const date = opts.date || new Date().toISOString().slice(0, 10);
+		const date = opts.date || today();
 		const folder = cleanFolderPath(this.settings.meetingsFolder) || this.settings.outputFolder;
 		await this.ensureFolder(folder);
 		const stub = buildMeetingStub({
@@ -2709,6 +2738,45 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	graphConnected(): boolean {
 		return !!this.settings.graphRefresh;
+	}
+
+	/** Show or hide each ribbon icon to match settings. Called at load and
+	 *  whenever a toggle changes, so the strip updates as you flip it. */
+	applyRibbonVisibility() {
+		const s = this.settings;
+		const want = { record: s.ribbonRecord, meeting: s.ribbonMeeting, briefing: s.ribbonBriefing, assistant: s.ribbonAssistant };
+		for (const key of Object.keys(want) as (keyof typeof want)[]) {
+			this.ribbonEls[key]?.toggleClass("pa-ribbon-hidden", !want[key]);
+		}
+	}
+
+	/** Say once, on the first load of an install that has nothing configured,
+	 *  that setup is needed and where it lives.
+	 *
+	 *  Nothing here transcribes or extracts without a transcription provider or
+	 *  an AI model. Without one the first recording simply fails, which teaches
+	 *  the same lesson far more expensively: a meeting has already happened by
+	 *  then. Said once and never again, with the settings one click away. */
+	private nudgeSetupOnce() {
+		const s = this.settings;
+		if (s.setupNudged) return;
+		const providers: TranscriptionProvider[] = ["whisper", "assemblyai", "deepgram", "whisperx"];
+		const hasProvider = providers.some((p) => this.providerReady(p));
+		const hasModel = s.llmProvider === "custom" ? !!s.llmEndpoint.trim() : !!s.anthropicKey.trim();
+		if (hasProvider || hasModel) return;
+
+		s.setupNudged = true;
+		void this.saveSettings();
+		const notice = new Notice("", 20000);
+		notice.noticeEl.createSpan({
+			text: "Power Assistant is installed but not set up yet. Recording and AI notes need a transcription provider, an AI model, or both. ",
+		});
+		const link = notice.noticeEl.createEl("a", { text: "Open setup", attr: { href: "#" } });
+		link.addEventListener("click", (e) => {
+			e.preventDefault();
+			notice.hide();
+			this.openOwnSettings("setup");
+		});
 	}
 
 	/** Open this plugin's settings on the given tab. Not-connected notices call
@@ -2868,6 +2936,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const end = new Date(now.getTime() + 14 * 864e5);
 		new Notice("Power Assistant: reading your calendar…");
 		try {
+			// an exact moment handed to an API, not a day anyone reads: UTC is right here
 			const events = (await fetchCalendar(token, now.toISOString(), end.toISOString())) as GraphEvent[];
 			return events.map(eventToInvite).filter((inv) => inv.title.trim());
 		} catch (e) {
@@ -3068,7 +3137,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			outputFolder: s.outputFolder,
 			filenameTemplate: s.filenameTemplate,
 		};
-		const date = new Date().toISOString().slice(0, 10);
+		const date = today();
 		const notePath = normalizePath(`${o.outputFolder}/${renderFilename(o.filenameTemplate, file.basename, date)}`);
 		const existingNote = this.app.vault.getAbstractFileByPath(notePath);
 		if (existingNote instanceof TFile) {
@@ -3076,7 +3145,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			// person all end this run; our own or a stale stub is resumable
 			const st = this.stubState(existingNote);
 			if (!(fromAuto && (st === "mine" || st === "stale"))) {
-				if (overrides) new Notice("Power Assistant: that note already exists — delete or rename it first.");
+				if (overrides) new Notice("Power Assistant: that note already exists (delete or rename it first).");
 				return; // already processed (here or on another device)
 			}
 		}
@@ -3189,7 +3258,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			outputFolder: s.outputFolder,
 			filenameTemplate: s.filenameTemplate,
 		};
-		let date = new Date().toISOString().slice(0, 10);
+		let date = today();
 		let title = first.basename.replace(/\.part1$/, "");
 		let notePath: string;
 		let targetNote: TFile | undefined;
@@ -3782,7 +3851,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			const date =
 				String(fm.date ?? "").slice(0, 10) ||
 				f.basename.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ||
-				new Date(f.stat.ctime).toISOString().slice(0, 10);
+				dayOf(new Date(f.stat.ctime));
 			const attendees = Array.isArray(fm.attendees)
 				? (fm.attendees as unknown[]).map(personName).filter(Boolean)
 				: [];
@@ -3804,7 +3873,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (existing instanceof TFile) {
 			const head = (await this.app.vault.cachedRead(existing)).slice(0, 400);
 			if (!/^generated: true$/m.test(head)) {
-				new Notice(`Power Assistant: ${path} exists and isn't a generated note — not overwriting.`);
+				new Notice(`Power Assistant: ${path} exists and isn't a generated note, so nothing was overwritten.`);
 				return;
 			}
 			await this.app.vault.modify(existing, md);
@@ -3881,7 +3950,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		// since the last sync, which is a real conflict however it is resolved.
 		// Derive it from the data, and on a refresh keep what the page already had.
 		const dates = [...d.meetings, ...d.openTasks, ...d.decisions, ...d.questions].map((x) => x.date).filter(Boolean).sort();
-		return buildPersonReport(d, agenda, dates[dates.length - 1] ?? keepDate ?? new Date().toISOString().slice(0, 10));
+		return buildPersonReport(d, agenda, dates[dates.length - 1] ?? keepDate ?? today());
 	}
 
 	/* ---- documents: OCR into filed, typed notes ---- */
@@ -3967,7 +4036,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			let notePath = normalizePath(`${stem}.md`);
 			let n = 2;
 			while (this.app.vault.getAbstractFileByPath(notePath)) notePath = normalizePath(`${stem}-${n++}.md`);
-			const md = buildDocNote(fields, { filePath: docPath, ocrText: text, today: new Date().toISOString().slice(0, 10), review: filing.flag });
+			const md = buildDocNote(fields, { filePath: docPath, ocrText: text, today: today(), review: filing.flag });
 			const note = await this.app.vault.create(notePath, md);
 			await this.app.workspace.getLeaf(false).openFile(note);
 			new Notice(`Power Assistant: filed ${fields.vendor || file.basename} (${fields.docType}).`);
@@ -4082,9 +4151,9 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  whether a digest was actually written (the auto-trigger stamps on that). */
 	async weeklyDigest(open = true): Promise<boolean> {
 		const now = new Date();
-		const to = now.toISOString().slice(0, 10);
-		const from = new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10);
-		const staleBefore = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+		const to = dayOf(now);
+		const from = daysAgo(6, now);
+		const staleBefore = daysAgo(7, now);
 		const d: DigestData = { from, to, meetings: [], decisions: [], newTasks: [], completed: [], stale: [], questions: [] };
 		await this.eachCapture((f, fm, md, date) => {
 			if (date >= from && date <= to) {
@@ -4134,7 +4203,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Auto-digest: once per new ISO week, on layout-ready, if the week has
 	 *  content. Opt-in (settings) and never steals focus. */
 	private async maybeAutoDigest() {
-		const week = isoWeek(new Date().toISOString().slice(0, 10));
+		const week = isoWeek(today());
 		if (week === this.settings.lastDigestWeek) return;
 		const wrote = await this.weeklyDigest(false);
 		if (wrote) {
@@ -4148,8 +4217,8 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  documents due soon, and open questions. Gathers from the vault (and the
 	 *  calendar when connected), writes a generated note, and opens it. */
 	async morningBriefing(open = true): Promise<void> {
-		const today = new Date().toISOString().slice(0, 10);
-		const horizon = new Date(Date.now() + Math.max(0, this.settings.briefingHorizonDays) * 86400000).toISOString().slice(0, 10);
+		const today = dayOf(new Date());
+		const horizon = daysAgo(-Math.max(0, this.settings.briefingHorizonDays));
 		const me = this.settings.yourName.trim();
 		const d: BriefingData = { date: today, meetings: [], commitments: [], dueDocs: [], questions: [] };
 		const seenMeeting = new Set<string>();
@@ -4175,7 +4244,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				d.commitments.push({ task, owner, due, fromPath: f.path, overdue: due < today });
 			}
 			// open questions from the last week, worth keeping in view
-			if (date >= new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10))
+			if (date >= daysAgo(7))
 				for (const q of this.sectionItems(md, "Questions")) d.questions.push({ text: q, fromPath: f.path });
 		});
 		// documents with a due date (bills, invoices) coming due or overdue
@@ -4221,7 +4290,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	private async maybeAutoBriefing() {
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		if (today === this.settings.lastBriefingDay) return;
 		this.settings.lastBriefingDay = today;
 		await this.saveSettings();
@@ -4257,7 +4326,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Open the writer over the last week's meetings, so "the status email from
 	 *  this week" has every meeting's decisions and actions to draw on. */
 	async draftFromRecent() {
-		const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+		const since = daysAgo(7);
 		const parts: string[] = [];
 		await this.eachCapture((f, _fm, md, date) => {
 			if (date >= since) parts.push(buildDraftContext(md));
@@ -4332,7 +4401,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 		} catch (e) {
 			console.error("Power Assistant:", e);
-			new Notice("Power Assistant: Word export failed — " + (e instanceof Error ? e.message : String(e)), 8000);
+			new Notice("Power Assistant: Word export failed: " + (e instanceof Error ? e.message : String(e)), 8000);
 		}
 	}
 
@@ -4360,7 +4429,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			new Notice("Power Assistant: no processed documents yet. Right-click a bill or receipt and choose Process document.");
 			return;
 		}
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		await this.writeGenerated(`${this.settings.outputFolder}/Finances`, "Finances", buildFinancesRollup(docs, today), open);
 	}
 
@@ -4421,7 +4490,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			return;
 		}
 		const stats = senderStats(collapseThreads(mail));
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		await this.writeGenerated(`${this.settings.outputFolder}/Mail`, `Senders in ${safeName(folderName)}`, buildSenderReport(stats, folderName, today), true);
 	}
 
@@ -4476,7 +4545,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			});
 		}
 
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		const known = this.knownConversations();
 		const folder = `${base}/${safeName(folderName)}`;
 		await this.ensureFolder(folder);
@@ -4603,7 +4672,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			const days = this.settings.mailWindowDays;
 			const sinceMs = Date.now() - days * 86400000;
 			const incoming = await feed(sinceMs);
-			const today = new Date().toISOString().slice(0, 10);
+			const today = dayOf(new Date());
 			const { add, drop } = planWindowUpdate(incoming, new Set(this.mailMeta.keys()), this.mailDates, today, days);
 			for (const id of drop) this.removeMailDoc(id);
 			for (const d of add) this.addMailDoc(d);
@@ -4698,7 +4767,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			return 0;
 		}
 
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		const known = this.knownOrderIds();
 		const base = this.settings.txnFolder.trim();
 		let flagged = 0;
@@ -4724,7 +4793,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Write the orders and items an already-parsed source produced. Shared by
 	 *  mail capture and CSV backfill so both land identically. */
 	private async writeOrders(orders: TxnOrder[], opts: { sourceUrl?: string; sourcePath?: string }): Promise<{ written: number; flagged: number }> {
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		const known = this.knownOrderIds();
 		const base = this.settings.txnFolder.trim();
 		let flagged = 0;
@@ -4783,7 +4852,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			new Notice("Power Assistant: no line items captured yet. Run \"Scan mail for orders and bills now\" from Power Desk.", 8000);
 			return;
 		}
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		await this.writeGenerated(`${this.settings.outputFolder}/Spending`, `Spending (${scope})`, buildSpendRollup(items, today, scope), open);
 	}
 
@@ -5857,7 +5926,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				| undefined;
 			if (!isCaptureNote(fm)) continue;
 			if ((fm?.series ?? seriesKey(f.basename)) !== key) continue;
-			const date = String(fm?.date ?? "").slice(0, 10) || new Date(f.stat.ctime).toISOString().slice(0, 10);
+			const date = String(fm?.date ?? "").slice(0, 10) || dayOf(new Date(f.stat.ctime));
 			if (date >= beforeDate) continue;
 			if (!best || date > bestDate) {
 				best = f;
@@ -5939,7 +6008,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const s = this.settings;
 		const utts = parseTranscriptFile(filename, content);
 		const title = filename.replace(/\.[^.]+$/, "").replace(/_+/g, " ").trim() || "Imported meeting";
-		const date = dateHint ?? new Date().toISOString().slice(0, 10);
+		const date = dateHint ?? today();
 		const o: ProcessOverrides = {
 			extractions: s.extractions,
 			includeTranscript: s.includeTranscript,
@@ -5948,7 +6017,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		};
 		const notePath = normalizePath(`${o.outputFolder}/${renderFilename(o.filenameTemplate, title, date)}`);
 		if (this.app.vault.getAbstractFileByPath(notePath)) {
-			new Notice("Power Assistant: a note for this transcript already exists — rename or delete it first.");
+			new Notice("Power Assistant: a note for this transcript already exists (rename or delete it first).");
 			return;
 		}
 		if (!utts && !content.trim()) {
@@ -5996,7 +6065,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const transcript = captureSourceText(md);
 		if (!transcript) return "no-text";
 		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as { date?: unknown; "pa-screens"?: unknown } | undefined;
-		const meetingDate = String(fm?.date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+		const meetingDate = String(fm?.date ?? "").slice(0, 10) || today();
 		const body = await withRetry(() =>
 			this.extract(transcript, chosen, { actionsAsTasks: this.settings.actionsAsTasks, meetingDate })
 		);
@@ -6639,8 +6708,8 @@ export default class PowerAssistantPlugin extends Plugin {
 			new Notice("Power Assistant: no eval produced a result (empty cases or every call failed); see the developer console.", 10000);
 			return;
 		}
-		const date = new Date().toISOString().slice(0, 10);
-		const stamp = new Date().toISOString().slice(11, 16).replace(":", "");
+		const date = today();
+		const stamp = clockOf(new Date()).slice(0, 5).replace("-", ""); // local HHMM, to tell two runs on one day apart
 		const folder = cases[0].parent?.path || this.settings.outputFolder;
 		const safeModel = model.replace(/[\\/:*?"<>|#^[\]]/g, "-");
 		const reportPath = normalizePath(`${folder}/Eval report ${date} ${stamp} (${safeModel}).md`);
@@ -6786,11 +6855,11 @@ export default class PowerAssistantPlugin extends Plugin {
 			// always checked before its download; YouTube paid for both and then
 			// refused, which is how an extraction can sit in the usage ledger with no
 			// note anywhere to show for it.
-			const date = new Date().toISOString().slice(0, 10);
+			const date = today();
 			const folder = cleanFolderPath(s.youtubeFolder) || s.outputFolder;
 			const where = this.captureNotePath(folder, renderMeetingFilename(s.youtubeFilename, title, date), url);
 			if ("duplicate" in where) {
-				new Notice(`Power Assistant: this video is already captured — see ${where.duplicate.basename}.`, 8000);
+				new Notice(`Power Assistant: this video is already captured (see ${where.duplicate.basename}.`, 8000);
 				return;
 			}
 			const notePath = where.path;
@@ -6817,7 +6886,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				const raw = tt.text ?? "";
 				transcript = raw.trimStart().startsWith("<") ? parseTimedTextXml(raw) : parseTimedText(JSON.parse(raw || "{}"));
 				if (!transcript) {
-					new Notice("Power Assistant: YouTube returned an empty caption track — try again in a minute.");
+					new Notice("Power Assistant: YouTube returned an empty caption track (try again in a minute).");
 					return;
 				}
 			}
@@ -6879,7 +6948,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				new Notice("Power Assistant: no slides found in that file.");
 				return;
 			}
-			const date = new Date().toISOString().slice(0, 10);
+			const date = today();
 			const folder = cleanFolderPath(s.pptxFolder) || s.outputFolder;
 			await this.ensureFolder(folder);
 			const notePath = normalizePath(`${folder}/${renderFilename(s.filenameTemplate, file.basename, date)}`);
@@ -7169,7 +7238,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  The replies underneath are not reachable from either: X serves the
 	 *  conversation only to a logged-in client. The reply count is captured
 	 *  instead, so a note at least records how much discussion a post drew. */
-	private async readTweetText(url: string): Promise<{ info: MediaInfo; text: string } | null> {
+	private async readTweetText(url: string): Promise<TweetRead | null> {
 		const id = xStatusId(url);
 		if (id) {
 			try {
@@ -7345,7 +7414,10 @@ export default class PowerAssistantPlugin extends Plugin {
 		const text = s.corrections.length ? applyCorrections(o.text, s.corrections) : o.text;
 		let body: string | null = null;
 		let extractionError: string | null = null;
-		if (this.llmReady()) {
+		// nothing to extract from is not an extraction failure: the captured text is
+		// the whole note. Asking anyway spends a call to be told, in the note's own
+		// Summary, that a URL cannot be summarized
+		if (this.llmReady() && hasWordsToExtract(text)) {
 			new Notice("Power Assistant: extracting notes…");
 			// never lose good text: if extraction fails, still write the note with the
 			// text and the error, like the meeting flow does
@@ -7359,7 +7431,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		await this.ensureFolder(o.folder);
 		const note = assembleNote({
 			title: o.title,
-			date: new Date().toISOString().slice(0, 10),
+			date: today(),
 			source: o.url,
 			embed: null,
 			body,
@@ -7391,6 +7463,11 @@ export default class PowerAssistantPlugin extends Plugin {
 			let info: MediaInfo;
 			let postText = "";
 			let hasAudio = true;
+			// a post read without yt-dlp explains itself differently when it turns out
+			// to have nothing to say: the words are missing because it has none, and
+			// the speech is missing because the program that fetches it is not here
+			let ytDlpAbsent = false;
+			let postHasVideo = false;
 			try {
 				const out = await this.runYtDlp(ytDlpInfoArgs(url, s.cookieBrowser, s.cookieFile), 90_000);
 				const dump = JSON.parse(out.trim().split("\n")[0] || "{}") as MediaDump;
@@ -7407,6 +7484,7 @@ export default class PowerAssistantPlugin extends Plugin {
 					return;
 				}
 				hasAudio = false;
+				ytDlpAbsent = absent;
 				const read = site?.id === "x" ? await this.readTweetText(url) : null;
 				if (!read) {
 					// Every other site: hand it to the page reader, which is what a link
@@ -7415,10 +7493,12 @@ export default class PowerAssistantPlugin extends Plugin {
 					return this.captureWeb(url);
 				}
 				// the words are saved either way, but a post carrying video quietly loses
-				// its transcript here, and the user is owed the reason
-				if (absent) new Notice("Power Assistant: saving the post's text. " + YTDLP_HINT, 12000);
+				// its transcript here, and the user is owed the reason. A post with no
+				// words of its own has nothing left to save, and says so below instead.
+				if (absent && read.text) new Notice("Power Assistant: saving the post's text. " + YTDLP_HINT, 12000);
 				info = read.info;
 				postText = read.text;
+				postHasVideo = read.hasVideo === true;
 			}
 
 			// only matters when there is audio: a text post costs no transcription
@@ -7428,13 +7508,31 @@ export default class PowerAssistantPlugin extends Plugin {
 				return;
 			}
 
+			// A post that is all video and no words comes back looking like a one-line
+			// post whose line is the link X appends to its own media. There is nothing
+			// there to file, and saying so is the whole answer: with yt-dlp installed
+			// this same post captures fine, because the words are in the audio. Asked
+			// before the folder and the note path, which are answers to a question that
+			// no longer arises.
+			if (!hasAudio && !postText.trim()) {
+				new Notice(
+					!ytDlpAbsent
+						? "Power Assistant: that post has no video and no words of its own, so there is nothing to capture."
+						: postHasVideo
+							? "Power Assistant: that post is a video with no words of its own, so its audio is the only thing to capture, and that needs yt-dlp. " + YTDLP_HINT
+							: "Power Assistant: that post has no words of its own. If it carries a video, capturing it needs yt-dlp. " + YTDLP_HINT,
+					ytDlpAbsent ? 14000 : 10000,
+				);
+				return;
+			}
+
 			const label = info.site ?? "";
 			const folder = renderFolder(s.mediaFolder, label) || s.outputFolder;
 			// checked before the download rather than after it: transcribing spends
 			// credits worth keeping for a note that does not exist yet
-			const where = this.captureNotePath(folder, renderMeetingFilename(s.mediaFilename, info.title, new Date().toISOString().slice(0, 10), label), url);
+			const where = this.captureNotePath(folder, renderMeetingFilename(s.mediaFilename, info.title, today(), label), url);
 			if ("duplicate" in where) {
-				new Notice(`Power Assistant: this post is already captured — see ${where.duplicate.basename}.`, 8000);
+				new Notice(`Power Assistant: this post is already captured (see ${where.duplicate.basename}.`, 8000);
 				return;
 			}
 			const notePath = where.path;
@@ -7453,6 +7551,8 @@ export default class PowerAssistantPlugin extends Plugin {
 					new Notice("Power Assistant: no speech in that video, so the post's own text was saved instead.", 10000);
 				}
 			}
+			// the wordless case was settled above; this one is a video that turned out
+			// to have no speech in it either, which is only knowable after transcribing
 			if (!text.trim()) {
 				new Notice("Power Assistant: that post has no speech and no text, so there is nothing to capture.", 10000);
 				return;
@@ -7598,9 +7698,9 @@ export default class PowerAssistantPlugin extends Plugin {
 		const s = this.settings;
 		const site = info.site ?? "";
 		const folder = renderFolder(s.webFolder, site) || s.outputFolder;
-		const where = this.captureNotePath(folder, renderMeetingFilename(s.webFilename, title, new Date().toISOString().slice(0, 10), site), url);
+		const where = this.captureNotePath(folder, renderMeetingFilename(s.webFilename, title, today(), site), url);
 		if ("duplicate" in where) {
-			new Notice(`Power Assistant: this page is already captured — see ${where.duplicate.basename}.`, 8000);
+			new Notice(`Power Assistant: this page is already captured (see ${where.duplicate.basename}.`, 8000);
 			return;
 		}
 		const notePath = where.path;
@@ -9178,7 +9278,7 @@ class ReExtractModal extends Modal {
 		c.empty();
 		c.createEl("p", {
 			cls: "ptc-modal-desc",
-			text: "Re-runs extraction from this note's own captured text with the current model — no re-transcription. The transcript (or the post or article it captured), moments, carried-over items, and audio embeds stay untouched. The sections start where this kind of capture normally sits.",
+			text: "Re-runs extraction from this note's own captured text with the current model (no re-transcription). The transcript (or the post or article it captured), moments, carried-over items, and audio embeds stay untouched. The sections start where this kind of capture normally sits.",
 		});
 		new Setting(c).setName("Template").addDropdown((d) => {
 			d.addOption("custom", "Custom");
@@ -9291,7 +9391,7 @@ class BulkReExtractModal extends Modal {
 		const files = this.plugin.capturesIn(this.folder, this.recurse);
 		c.createEl("p", {
 			cls: "ptc-modal-desc",
-			text: "Re-runs extraction on every capture note in this folder from each note's own captured text — no re-transcription. Transcripts, posts, articles, moments, carried-over items, and audio embeds stay untouched; only the AI sections are rewritten. Each note costs an extraction, and the run can be stopped part-way with everything done so far already saved.",
+			text: "Re-runs extraction on every capture note in this folder from each note's own captured text (no re-transcription). Transcripts, posts, articles, moments, carried-over items, and audio embeds stay untouched; only the AI sections are rewritten. Each note costs an extraction, and the run can be stopped part-way with everything done so far already saved.",
 		});
 		new Setting(c)
 			.setName(`${files.length} capture note${files.length === 1 ? "" : "s"}`)
@@ -10525,7 +10625,7 @@ class AssistantChatView extends ItemView {
 			// question's words so retrieval keeps the thread's subject
 			const prevQ = [...this.turns].reverse().find((t) => t.role === "user")?.content ?? "";
 			const terms = tokenize(q.length < 30 && prevQ ? `${prevQ} ${q}` : q);
-			const after = this.afterDays ? new Date(Date.now() - this.afterDays * 86400000).toISOString().slice(0, 10) : null;
+			const after = this.afterDays ? daysAgo(this.afterDays) : null;
 			const hits = await this.plugin.retrieveFiltered(q.length < 30 && prevQ ? `${prevQ}\n${q}` : q, terms, {
 				after,
 				attendee: this.attendee || null,
@@ -10573,7 +10673,7 @@ class AssistantChatView extends ItemView {
 				900
 			);
 			const { title, summary } = parseChatSummary(raw);
-			const date = new Date().toISOString().slice(0, 10);
+			const date = today();
 			const md = buildChatNote({ title, date, time: clockTime(Date.now()), summary, turns: this.turns });
 			await this.plugin.saveChatNote(`${date} ${title}`, md);
 		} catch (e) {
@@ -10913,7 +11013,7 @@ class LiveView extends ItemView {
 			this.panelEl.createDiv({ cls: "pcap-live-panel-title", text: "Catch-up" });
 			await MarkdownRenderer.render(this.app, summary, this.panelEl.createDiv(), "", this.plugin);
 		} catch (e) {
-			new Notice("Power Assistant: catch-up failed — " + (e instanceof Error ? e.message : String(e)));
+			new Notice("Power Assistant: catch-up failed: " + (e instanceof Error ? e.message : String(e)));
 		} finally {
 			this.setStatus("Live — transcribing…");
 		}
@@ -12558,6 +12658,24 @@ class AssistantSettingTab extends PluginSettingTab {
 			})
 			.addButton((b) => b.setButtonText("Test key").onClick(() => void this.plugin.verifyAssemblyKey()));
 
+		const ribbonHead = section("Ribbon icons", "setup");
+		void ribbonHead;
+		const ribbonRow = (name: string, desc: string, get: () => boolean, set: (v: boolean) => void) =>
+			new Setting(c)
+				.setName(name)
+				.setDesc(desc)
+				.addToggle((t) =>
+					t.setValue(get()).onChange((v) => {
+						set(v);
+						save();
+						this.plugin.applyRibbonVisibility();
+					})
+				);
+		ribbonRow("Start recording", "The microphone icon. Its command works either way.", () => s.ribbonRecord, (v) => (s.ribbonRecord = v));
+		ribbonRow("New meeting note", "The calendar icon.", () => s.ribbonMeeting, (v) => (s.ribbonMeeting = v));
+		ribbonRow("Morning briefing", "The sunrise icon.", () => s.ribbonBriefing, (v) => (s.ribbonBriefing = v));
+		ribbonRow("Open the assistant", "The sparkles icon.", () => s.ribbonAssistant, (v) => (s.ribbonAssistant = v));
+
 		const deepgramHead = section("Deepgram", "setup");
 		const deepgramPill = pill(deepgramHead, () => !!s.deepgramKey.trim());
 		new Setting(c)
@@ -13663,7 +13781,7 @@ class AssistantSettingTab extends PluginSettingTab {
 			);
 		new Setting(c)
 			.setName("Audio after processing")
-			.setDesc("Keep the recording (embedded in the note), or trash it once the note is written — the transcript is the durable record. Trashing frees space and tightens privacy.")
+			.setDesc("Keep the recording (embedded in the note), or trash it once the note is written. The transcript is the durable record. Trashing frees space and tightens privacy.")
 			.then((s) =>
 				help(
 					s,

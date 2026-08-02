@@ -352,6 +352,16 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(parseTweetOembed({ html: "<blockquote>no paragraph here</blockquote>" }), null, "a reply with no post paragraph yields null");
 	eq(parseTweetOembed({}), null, "an empty reply yields null");
 	eq(parseTweetOembed({ html: "<p>   </p>" }), null, "a whitespace-only post yields null");
+	// the real oEmbed reply for the wordless video post, verified live: the media
+	// link renders as its display text, which carries no scheme to recognize it by
+	const oeMedia = parseTweetOembed({
+		html: '<blockquote class="twitter-tweet" data-dnt="true"><p lang="zxx" dir="ltr"><a href="https://t.co/XneE327cx9">pic.twitter.com/XneE327cx9</a></p>&mdash; Elon Musk (@elonmusk) <a href="https://x.com/elonmusk/status/2082243743013614012?ref_src=twsrc%5Etfw">July 28, 2026</a></blockquote>',
+		author_name: "Elon Musk",
+		author_url: "https://x.com/elonmusk",
+	});
+	eq(oeMedia.text, "", "a post that is only a media link has no words, so oEmbed reports none");
+	eq(oeMedia.info.title, "Post from @elonmusk", "and it is titled by its author rather than by the link");
+	eq(oeMedia.info.posted, "2026-07-28", "the date is still recovered from a wordless post");
 	const noAuthor = parseTweetOembed({ html: '<p>words</p>&mdash; Someone (@nobody) <a href="https://x.com/nobody/status/9">May 1, 2026</a>' });
 	eq(noAuthor.info.handle, "@nobody", "with no author_url the handle falls back to the html");
 	eq(noAuthor.info.authorUrl, "https://x.com/nobody", "that fallback handle still builds an author URL");
@@ -397,6 +407,42 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(parseTweetEmbed({ text: "   " }), null, "a whitespace-only payload yields null too");
 	const ctxOnly = parseTweetEmbed({ quoted_tweet: { text: "the whole point", user: { screen_name: "a" } } });
 	ok(ctxOnly !== null, "a post that is only a quote is still worth capturing");
+
+	// --- a post that is all video and no words ---
+	// X appends a t.co link to the text of any post carrying media, so a wordless
+	// video post arrives looking like a one-line post whose line is a link. Reading
+	// it as words is what put "I cannot process this request" in a note.
+	const { postWords, tweetOwnText, hasWordsToExtract } = require("./pipeline");
+	eq(postWords("https://t.co/XneE327cx9"), "", "a bare media link is no words at all");
+	eq(postWords("Watch this https://t.co/abc"), "Watch this", "words next to one still count as words");
+	eq(tweetOwnText({ text: "https://t.co/abc", entities: { media: [{ url: "https://t.co/abc" }] } }), "", "the link X appended for the post's own video is not the post's text");
+	eq(tweetOwnText({ text: "Watch this https://t.co/abc", entities: { media: [{ url: "https://t.co/abc" }] } }), "Watch this", "with words present, only the appended link goes");
+	eq(tweetOwnText({ text: "Good read https://t.co/keep" }), "Good read https://t.co/keep", "a link the author typed is not in the media list and stays");
+	eq(quotedBlock({ text: "https://t.co/abc", entities: { media: [{ url: "https://t.co/abc" }] }, user: { screen_name: "a" } }, "Quoting"), null, "a quoted post that is only video quotes nothing");
+
+	// the real payload for the wordless video post that started this, trimmed
+	const vid = parseTweetEmbed({
+		text: "https://t.co/XneE327cx9",
+		created_at: "2026-07-28T23:16:09.000Z",
+		favorite_count: 105510,
+		conversation_count: 3844,
+		user: { name: "Elon Musk", screen_name: "elonmusk" },
+		entities: { media: [{ url: "https://t.co/XneE327cx9" }] },
+		video: { durationMs: 274983 },
+	});
+	ok(vid !== null, "a wordless post is still read: it was found, it just has no words");
+	eq(vid.text, "", "and it reports no words rather than a link pretending to be words");
+	eq(vid.hasVideo, true, "the video is reported, so the caller can say yt-dlp is what is missing");
+	eq(vid.info.title, "Post from @elonmusk", "the title falls back to the author, as it already did");
+	eq(vid.info.likes, 105510, "the counts are still read off the payload");
+	eq(parseTweetEmbed({ text: "Just words", user: { screen_name: "a" } }).hasVideo, undefined, "a text post reports no video rather than false");
+
+	// the guard that keeps a refusal out of a note: nothing to summarize, nothing asked
+	ok(!hasWordsToExtract("https://t.co/XneE327cx9"), "a bare URL is nothing to extract from");
+	ok(!hasWordsToExtract("   \n  "), "and neither is whitespace");
+	ok(!hasWordsToExtract("https://a.example/x — https://b.example/y"), "nor a line of links and punctuation");
+	ok(hasWordsToExtract("Way more than a billion"), "two sentences of a post are");
+	ok(hasWordsToExtract("See https://a.example/x for the numbers"), "so are words around a link");
 
 	// --- web page capture ---
 	const page = [
@@ -2398,6 +2444,33 @@ eq(isoWeek("2026-07-12"), "2026-W28", "ISO week for a Sunday");
 eq(isoWeek("2026-07-13"), "2026-W29", "the next Monday rolls the week");
 eq(isoWeek("2026-01-01"), "2026-W01", "new year's day is week 1");
 ok(isoWeek("2026-07-06") === isoWeek("2026-07-12"), "a Mon–Sun span shares one week key");
+
+// --- what day it is, where the user is ---
+// Every date these build is read off the local clock, so the assertions hold in
+// any zone: a Date built from local parts is that local moment by construction.
+{
+	const { dayOf, today, daysAgo, clockOf } = require("./pipeline");
+	// the moment that started this: a post captured at 9:16 PM on Saturday Aug 1
+	// was filed as Aug 2, because that is the date in Greenwich
+	const evening = new Date(2026, 7, 1, 21, 16, 9);
+	eq(dayOf(evening), "2026-08-01", "an evening is dated the day it happened, not the next day in UTC");
+	eq(clockOf(evening), "21-16-09", "and the clock reads in local hours");
+	eq(dayOf(new Date(2026, 0, 1, 0, 0, 0)), "2026-01-01", "midnight starting a year belongs to the new year");
+	eq(dayOf(new Date(2026, 11, 31, 23, 59, 59)), "2026-12-31", "and the last second of one belongs to the old");
+	eq(dayOf(new Date(2026, 8, 5, 9, 0, 0)), "2026-09-05", "single-digit months and days are padded");
+	eq(today(), dayOf(new Date()), "today is the current moment's day and nothing else");
+
+	eq(daysAgo(0, evening), "2026-08-01", "nothing ago is today");
+	eq(daysAgo(6, evening), "2026-07-26", "the digest's week reaches back six days");
+	eq(daysAgo(7, evening), "2026-07-25", "and its staleness line one further");
+	eq(daysAgo(-7, evening), "2026-08-08", "counting the other way gives the briefing's horizon");
+	eq(daysAgo(31, evening), "2026-07-01", "a month back crosses the month boundary");
+	// the reason this counts days instead of subtracting milliseconds: US clocks
+	// move forward on 2026-03-08, making it a 23-hour day. Going back 24 hours from
+	// just after midnight on the 9th lands on the 7th; going back one day does not.
+	eq(daysAgo(1, new Date(2026, 2, 9, 0, 30, 0)), "2026-03-08", "the day after the clocks move, yesterday is still yesterday");
+	eq(daysAgo(1, new Date(2026, 10, 2, 0, 30, 0)), "2026-11-01", "and the day after they move back, likewise");
+}
 
 {
 	const ex = extractionsFromKeys(["summary", "risks"]);
