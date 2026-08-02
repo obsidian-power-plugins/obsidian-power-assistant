@@ -51,10 +51,12 @@ Already connected from before **Email this page** existed? That connection agree
 
 ## Meeting intelligence
 
-![A transcript with each turn labeled by a colored speaker chip, a clickable timestamp, and the speaker's real name](docs/images/transcript.png)
+![A transcript callout with each turn led by a colored avatar carrying the speaker's initial, their real name, and a clickable timestamp, plus a Highlights only toggle in the callout header](docs/images/transcript.png)
 
-Each turn carries a colored chip, a clickable timestamp that seeks the audio, and the
-person's real name rather than Speaker A.
+Each speaker keeps one color across the whole transcript, so a turn is attributable at a
+glance without reading the name. The stamp beside it seeks the audio, clicking a name
+opens the rename dialog, and **Highlights only** in the header filters to the turns worth
+rereading.
 
 - **Click a stamp, hear the moment.** In Reading view, every `[12:34]` stamp in a capture note is a link: clicking it seeks the embedded audio to that second and plays. Works in the transcript, in Moments, anywhere in the note.
 - **Real names, not Speaker A.** After a diarized transcription, Claude reads the words for self-introductions and addressing patterns, proposes who each speaker is, and a small dialog lets you confirm or fix the guesses (an empty box keeps the letter). Named attendees become wiki-links in the note's properties, and the transcript labels are rewritten. Nothing is ever guessed from outside the transcript.
