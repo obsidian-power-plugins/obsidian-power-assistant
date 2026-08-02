@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
 	App,
+	Component,
 	ButtonComponent,
 	Editor,
 	EventRef,
@@ -101,7 +102,7 @@ const YOUTUBE_REACH_PROBE = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 /** The version of the CODE actually running, shown by the Show-running-version
  *  command; the Community-plugins list only shows what is on DISK, which
  *  diverges from the running instance until a real reload. Bump with manifest. */
-const PC_BUILD = "1.89.4";
+const PC_BUILD = "1.89.5";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -9353,7 +9354,7 @@ class MeetingAskModal extends Modal {
 			const answer = await this.plugin.claudeChat(buildMeetingChat(this.noteMd, this.turns), 1500);
 			this.turns.push({ role: "assistant", content: answer });
 			a.empty();
-			await MarkdownRenderer.render(this.app, answer, a, "", this.plugin);
+			await MarkdownRenderer.render(this.app, answer, a, "", this.renderComp());
 			a.scrollIntoView({ block: "nearest" });
 		} catch (e) {
 			this.turns.pop(); // the failed question can be re-asked
@@ -9363,7 +9364,19 @@ class MeetingAskModal extends Modal {
 		}
 	}
 
+	/** Owns whatever MarkdownRenderer attaches. A modal outlives nothing, so its
+	 *  rendered children should die with it rather than with the plugin. */
+	private _rc: Component | null = null;
+	private renderComp(): Component {
+		this._rc?.unload();
+		this._rc = new Component();
+		this._rc.load();
+		return this._rc;
+	}
+
 	onClose() {
+		this._rc?.unload();
+		this._rc = null;
 		this.contentEl.empty();
 	}
 }
@@ -11149,7 +11162,7 @@ class LiveView extends ItemView {
 			const summary = await this.plugin.claude(buildCatchUpPrompt(text, 10), 400);
 			this.panelEl.empty();
 			this.panelEl.createDiv({ cls: "pcap-live-panel-title", text: "Catch-up" });
-			await MarkdownRenderer.render(this.app, summary, this.panelEl.createDiv(), "", this.plugin);
+			await MarkdownRenderer.render(this.app, summary, this.panelEl.createDiv(), "", this);
 		} catch (e) {
 			new Notice("Power Assistant: catch-up failed: " + (e instanceof Error ? e.message : String(e)));
 		} finally {
@@ -11733,7 +11746,7 @@ class SharePageModal extends Modal {
 			this.paintSend();
 			return;
 		}
-		await MarkdownRenderer.render(this.app, text, this.bodyEl, this.file.path, this.plugin);
+		await MarkdownRenderer.render(this.app, text, this.bodyEl, this.file.path, this.renderComp());
 		this.paintSend();
 	}
 
@@ -11773,7 +11786,19 @@ class SharePageModal extends Modal {
 		}
 	}
 
+	/** Owns whatever MarkdownRenderer attaches. A modal outlives nothing, so its
+	 *  rendered children should die with it rather than with the plugin. */
+	private _rc: Component | null = null;
+	private renderComp(): Component {
+		this._rc?.unload();
+		this._rc = new Component();
+		this._rc.load();
+		return this._rc;
+	}
+
 	onClose() {
+		this._rc?.unload();
+		this._rc = null;
 		this.contentEl.empty();
 	}
 }
@@ -11857,7 +11882,7 @@ class DraftModal extends Modal {
 				this.outEl.setText(snap);
 			});
 			this.outEl.empty();
-			await MarkdownRenderer.render(this.app, this.draft, this.outEl, "", this.plugin);
+			await MarkdownRenderer.render(this.app, this.draft, this.outEl, "", this.renderComp());
 		} catch (e) {
 			this.outEl.setText("Draft failed: " + humanizeError(e instanceof Error ? e.message : String(e)));
 		} finally {
@@ -11877,7 +11902,19 @@ class DraftModal extends Modal {
 		this.close();
 	}
 
+	/** Owns whatever MarkdownRenderer attaches. A modal outlives nothing, so its
+	 *  rendered children should die with it rather than with the plugin. */
+	private _rc: Component | null = null;
+	private renderComp(): Component {
+		this._rc?.unload();
+		this._rc = new Component();
+		this._rc.load();
+		return this._rc;
+	}
+
 	onClose() {
+		this._rc?.unload();
+		this._rc = null;
 		this.contentEl.empty();
 	}
 }
