@@ -101,7 +101,7 @@ const YOUTUBE_REACH_PROBE = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 /** The version of the CODE actually running, shown by the Show-running-version
  *  command; the Community-plugins list only shows what is on DISK, which
  *  diverges from the running instance until a real reload. Bump with manifest. */
-const PC_BUILD = "1.87.1";
+const PC_BUILD = "1.89.4";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
