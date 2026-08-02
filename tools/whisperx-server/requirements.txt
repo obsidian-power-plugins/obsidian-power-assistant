@@ -1,0 +1,4 @@
+whisperx>=3.2
+fastapi>=0.111
+uvicorn>=0.30
+python-multipart>=0.0.9

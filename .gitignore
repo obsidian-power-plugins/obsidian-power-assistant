@@ -1,0 +1,6 @@
+node_modules/
+main.js
+tests.cjs
+package-lock.json
+*.map
+__pycache__/

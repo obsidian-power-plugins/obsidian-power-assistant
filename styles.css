@@ -1,0 +1,1576 @@
+/* the ribbon mic pulses red while a recording is running */
+.ptc-recording {
+	color: var(--text-error);
+	animation: ptc-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes ptc-pulse {
+	50% {
+		opacity: 0.45;
+	}
+}
+
+/* paused: steady, muted, no pulse */
+.ptc-paused {
+	color: var(--text-warning);
+	animation: none;
+	opacity: 0.7;
+}
+
+.ptc-modal-desc {
+	color: var(--text-muted);
+	margin-top: 0;
+}
+
+.ptc-modal-btns {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 14px;
+}
+
+/* the "hear this speaker" button in the naming dialog */
+.pa-name-play {
+	color: var(--interactive-accent);
+}
+.pa-name-play:hover {
+	color: var(--interactive-accent-hover);
+}
+
+/* a turn's words are clickable in Reading view: click to hear that turn */
+.pa-tr-turn {
+	cursor: pointer;
+}
+
+/* Move-this-turn dialog: the note's other speakers as one-click choices */
+.pa-turn-move {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 10px 0 14px;
+}
+.pa-turn-quote {
+	font-style: italic;
+}
+
+/* the Capture a YouTube video dialog: a roomy URL box that fills the width */
+.modal.pcap-yt-modal {
+	width: 560px;
+	max-width: 92vw;
+}
+
+.pcap-yt-url-row .setting-item-info {
+	flex: 0 0 auto;
+	margin-right: 12px;
+}
+
+.pcap-yt-url-row .setting-item-control {
+	flex: 1;
+}
+
+.pcap-yt-url-row .setting-item-control input {
+	width: 100%;
+}
+
+/* the Correct dialog: a fixed label column so Find and Replace with line up */
+.pcap-correct-row .setting-item-info {
+	flex: 0 0 140px;
+}
+
+.pcap-correct-row .setting-item-control {
+	flex: 1;
+}
+
+.pcap-correct-row .setting-item-control input {
+	width: 100%;
+}
+
+/* the purpose-built transcript block: a clean speaker-row look, not a quote,
+   with a custom icon and accent */
+.callout[data-callout="transcript"] {
+	--callout-color: 124, 108, 245;
+	--callout-icon: lucide-messages-square;
+}
+
+/* a little breathing room between turns */
+.pa-transcript .callout-content > p {
+	margin: 0.5em 0;
+}
+
+/* each speaker label wears its own color and is click-to-rename */
+.pa-transcript .pa-tr-speaker {
+	color: var(--pa-speaker-color, var(--text-normal));
+	cursor: pointer;
+}
+
+.pa-transcript .pa-tr-speaker:hover {
+	text-decoration: underline;
+}
+
+/* keep the [m:ss] stamp in the accent color, not the speaker color */
+.pa-transcript .pa-tr-speaker .ptc-stamp {
+	color: var(--text-accent);
+	font-weight: normal;
+}
+
+/* the speaker color picker: round swatches (compound selector so the modal
+   button chrome does not box them) */
+.pa-color-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 10px 0 4px;
+}
+
+.pa-color-swatches button.pa-color-swatch {
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	box-shadow: none;
+	padding: 0;
+	cursor: pointer;
+}
+
+.pa-color-swatches button.pa-color-swatch:hover {
+	border-color: var(--background-modifier-border-hover);
+}
+
+.pa-color-swatches button.pa-color-swatch.is-current {
+	border-color: var(--text-normal);
+}
+
+/* the speaker emoji picker */
+.pa-emoji-search {
+	width: 100%;
+	margin: 6px 0 8px;
+}
+
+.pa-emoji-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	max-height: 220px;
+	overflow-y: auto;
+	margin-bottom: 12px;
+	padding: 2px;
+}
+
+.pa-emoji-grid button.pa-emoji {
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	font-size: 20px;
+	line-height: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	box-shadow: none;
+	cursor: pointer;
+}
+
+.pa-emoji-grid button.pa-emoji:hover {
+	background: var(--background-modifier-hover);
+}
+
+.pa-emoji-grid button.pa-emoji.is-current {
+	border-color: var(--interactive-accent);
+}
+
+.pa-emoji-empty {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	padding: 8px 2px;
+}
+
+/* the Highlights-only toggle in the transcript header */
+.pa-transcript .callout-title {
+	align-items: center;
+}
+
+.pa-transcript button.pa-tr-hltoggle {
+	margin-left: auto;
+	font-size: var(--font-ui-smaller);
+	padding: 2px 9px;
+	background: transparent;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 12px;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.pa-transcript button.pa-tr-hltoggle:hover {
+	color: var(--text-normal);
+}
+
+.pa-transcript button.pa-tr-hltoggle.is-on {
+	background: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+/* show-only-highlights hides turns that have no highlight (but keeps comments) */
+.pa-transcript.pa-only-highlights .callout-content > p:not(:has(mark)):not(.pa-tr-comment) {
+	display: none;
+}
+
+/* the speaker avatar: a colored circle with the emoji or initial, click-to-edit */
+.pa-transcript .pa-tr-avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	margin-right: 7px;
+	vertical-align: -5px;
+	background: var(--pa-speaker-color, var(--interactive-normal));
+	color: #fff;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1;
+	cursor: pointer;
+	user-select: none;
+}
+
+.pa-transcript .pa-tr-avatar.has-emoji {
+	background: var(--background-modifier-hover);
+	font-size: 14px;
+}
+
+/* Live Preview (Edit mode): the transcript is plain, always-editable speaker
+   lines styled like Otter — the avatar sits in a left gutter, "Name  time" is
+   the header, and the spoken text drops onto its own line below it */
+/* The selector is prefixed with the source-view ancestor so it out-specifies
+   Obsidian core's `.markdown-source-view.mod-cm6 .cm-line { padding: 0 }`, which
+   otherwise wins and flattens the left gutter to nothing (only text-indent, not
+   padding, survives that clash). */
+.markdown-source-view.mod-cm6 .cm-line.pa-lp-tr {
+	background: transparent;
+	/* hanging indent: padding-left (32) equals the avatar's 24px width + its 8px
+	   right margin, and text-indent pulls the first row back by that same 32, so
+	   the avatar's left edge lands at the line start (aligned with the note's
+	   headings/body) while the name and wrapped body sit in the column to its right */
+	padding: 12px 10px 12px 32px;
+	text-indent: -32px;
+}
+
+/* the continuation line of a turn whose body spans more than one Markdown line:
+   align it with the body text above the gutter (same specificity fix) */
+.markdown-source-view.mod-cm6 .cm-line.pa-lp-tr-cont {
+	padding: 0 10px 12px 32px;
+}
+
+/* Collapse the blank Markdown line (the `\n\n` separator) that sits between
+   turns: it renders as a full ~23px empty editor line, which on top of each
+   turn's 12px padding roughly doubles the space between speakers. Targeting the
+   empty cm-line immediately before a speaker line (never a turn or its body,
+   which carry their own classes) drops the gap to just the padding — about half.
+   The turn's own padding is left alone, so the playing-turn highlight stays roomy. */
+.markdown-source-view.mod-cm6 .cm-line:has(+ .cm-line.pa-lp-tr) {
+	min-height: 0;
+	line-height: 0;
+	font-size: 0;
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+/* prefixed to out-specify the base .pa-lp-tr rule's `background: transparent`
+   (which gained the source-view prefix too), so the playing-turn shading paints
+   instead of losing the cascade and rendering transparent */
+.markdown-source-view.mod-cm6 .cm-line.pa-lp-tr.pa-lp-tr-current {
+	background: rgba(124, 108, 245, 0.09);
+	border-radius: 6px;
+}
+
+.pa-lp-tr-name {
+	color: var(--pa-speaker-color);
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.cm-line.pa-lp-tr .pa-lp-tr-stamp {
+	color: var(--text-muted) !important;
+	font-weight: 400;
+	font-size: 0.9em;
+	margin-left: 10px;
+	text-decoration: none !important;
+	cursor: pointer;
+}
+
+/* kill any link-token underline/color CodeMirror paints on the [m:ss] stamp */
+.cm-line.pa-lp-tr .cm-link,
+.cm-line.pa-lp-tr .cm-underline,
+.cm-line.pa-lp-tr .cm-formatting-link,
+.cm-line.pa-lp-tr .cm-url {
+	text-decoration: none !important;
+}
+
+.pa-tr-avatar.pa-lp-avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: middle;
+	text-indent: 0;
+	background: var(--pa-speaker-color, var(--interactive-normal));
+	color: #fff;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1;
+	user-select: none;
+	cursor: pointer;
+}
+
+/* mine is the player now: hide the note's native audio embed, and clear the
+   status-bar labels off the sticky bar while a player is showing */
+.pa-has-player .internal-embed.media-embed:has(audio) {
+	display: none;
+}
+
+body.pa-player-active .status-bar {
+	display: none;
+}
+
+.pa-tr-avatar.pa-lp-avatar.has-emoji {
+	background: var(--background-modifier-hover);
+	font-size: 14px;
+}
+
+/* a crosstalk turn: several voices at once. The badge shows the voice count
+   and opens no menu, and the label is not a name to click; both inherit the
+   muted color through --pa-speaker-color set inline. Compound selectors so
+   the base rules' cursor:pointer loses. */
+.pa-tr-avatar.pa-lp-avatar.pa-lp-avatar-x {
+	cursor: default;
+}
+
+.pa-lp-tr-name.pa-lp-tr-name-x {
+	cursor: text;
+}
+
+/* a comment turn (a line that starts with the speech-balloon): a soft bubble */
+.pa-transcript .callout-content > p.pa-tr-comment {
+	margin: 0.35em 0 0.35em 30px;
+	padding: 6px 10px;
+	background: var(--background-modifier-hover);
+	border-radius: 8px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.ptc-modal-btns.ptc-left {
+	justify-content: flex-start;
+	margin-top: 8px;
+}
+
+textarea.ptc-invite-paste {
+	width: 100%;
+	font-size: 12px;
+	resize: vertical;
+}
+
+.ptc-hidden-file {
+	display: none;
+}
+
+/* the New meeting dialog: a full-width vertical form (wider than the default
+   label-left / control-right rows) so long titles, attendee lists, and agendas
+   are readable, and it stays usable on smaller laptops */
+.pcap-meeting-modal {
+	width: 660px;
+	max-width: 92vw;
+}
+
+.pcap-field-label {
+	display: block;
+	font-weight: 600;
+	margin: 16px 0 3px;
+}
+
+.pcap-field-sub {
+	color: var(--text-muted);
+	font-size: 12.5px;
+	margin: 0 0 6px;
+}
+
+.pcap-field-input {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+textarea.pcap-field-input {
+	resize: vertical;
+	font-family: inherit;
+}
+
+textarea.pcap-agenda {
+	min-height: 140px;
+}
+
+textarea.pcap-paste {
+	min-height: 62px;
+	font-size: 12px;
+}
+
+.pcap-btn-row {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin: 10px 0 2px;
+}
+
+/* the in-note "working" indicator: a spinning loader in a callout while a
+   recording is transcribed and extracted, replacing the black toasts */
+.callout[data-callout="pc-working"] {
+	--callout-color: 130, 100, 250;
+}
+
+.callout[data-callout="pc-working"] .callout-icon svg {
+	display: none;
+}
+
+.callout[data-callout="pc-working"] .callout-icon::after {
+	content: "";
+	display: inline-block;
+	width: 15px;
+	height: 15px;
+	border: 2px solid var(--interactive-accent);
+	border-top-color: transparent;
+	border-radius: 50%;
+	animation: pc-spin 0.8s linear infinite;
+}
+
+@keyframes pc-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.ptc-devicecode {
+	font-family: var(--font-monospace);
+	font-size: 26px;
+	font-weight: 700;
+	letter-spacing: 2px;
+	text-align: center;
+	padding: 12px;
+	margin: 14px 0;
+	border-radius: 8px;
+	background: var(--background-secondary);
+	user-select: all;
+}
+
+/* the sign-in URL under the device-code buttons: separated from the button
+ * row and the Cancel row instead of hugging them */
+.ptc-devicecode-url {
+	margin: 14px 0 2px;
+	font-size: 13px;
+	word-break: break-all;
+	user-select: all;
+}
+
+.ptc-cal-list {
+	max-height: 46vh;
+	overflow-y: auto;
+	margin: 6px 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+}
+
+.ptc-cal-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 7px 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ptc-cal-row:last-child {
+	border-bottom: none;
+}
+
+.ptc-cal-label {
+	flex: 1;
+	min-width: 0;
+	cursor: pointer;
+}
+
+.ptc-cal-title {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ptc-cal-meta {
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.ptc-ask-row {
+	display: flex;
+	gap: 8px;
+}
+
+.ptc-ask-input {
+	flex: 1;
+}
+
+.ptc-ask-results {
+	margin-top: 14px;
+	max-height: 55vh;
+	overflow-y: auto;
+	user-select: text;
+}
+
+.ptc-ask-meta {
+	color: var(--text-faint);
+	font-size: 12px;
+}
+
+/* [m:ss] stamps in capture notes: click to jump the audio */
+.ptc-stamp {
+	color: var(--text-accent);
+	text-decoration: none;
+	cursor: pointer;
+	font-variant-numeric: tabular-nums;
+}
+
+.ptc-stamp:hover {
+	text-decoration: underline;
+}
+
+/* unnamed speaker labels invite a rename */
+.ptc-speaker {
+	cursor: pointer;
+	border-bottom: 1px dotted var(--text-faint);
+}
+
+.ptc-speaker:hover {
+	color: var(--text-accent);
+}
+
+/* per-meeting ask: starter chips + chat thread */
+.ptc-meeting-ask {
+	width: min(620px, 92vw);
+}
+
+.ptc-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding-bottom: 10px;
+}
+
+.ptc-chip {
+	font-size: 12px;
+	padding: 3px 11px;
+	border-radius: 999px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	cursor: pointer;
+	box-shadow: none;
+}
+
+.ptc-chip:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.ptc-thread {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 0;
+	margin-bottom: 12px;
+	min-height: 60px;
+}
+
+.ptc-turn-q {
+	align-self: flex-end;
+	max-width: 85%;
+	padding: 6px 11px;
+	border-radius: 10px 10px 2px 10px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-size: 13px;
+}
+
+.ptc-turn-a {
+	align-self: flex-start;
+	max-width: 95%;
+	padding: 6px 11px;
+	border-radius: 10px 10px 10px 2px;
+	background: var(--background-secondary);
+	font-size: 13.5px;
+	user-select: text;
+}
+
+.ptc-turn-a p:first-child {
+	margin-top: 0;
+}
+
+.ptc-turn-a p:last-child {
+	margin-bottom: 0;
+}
+
+/* live transcript sidebar */
+.pcap-live {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	height: 100%;
+}
+
+.pcap-live-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.pcap-live-btns {
+	display: flex;
+	gap: 6px;
+}
+
+.pcap-live-recbar {
+	display: none;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: var(--background-secondary);
+}
+
+.pcap-live-recbar.is-recording {
+	display: flex;
+}
+
+.pcap-rec-dot {
+	width: 11px;
+	height: 11px;
+	border-radius: 50%;
+	background: var(--color-red, #e5484d);
+	flex: 0 0 auto;
+	animation: pcap-rec-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pcap-rec-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.25;
+	}
+}
+
+.pcap-rec-timer {
+	font-family: var(--font-monospace);
+	font-size: 14px;
+	font-variant-numeric: tabular-nums;
+	flex: 0 0 auto;
+}
+
+.pcap-rec-meter {
+	flex: 1;
+	height: 8px;
+	border-radius: 4px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.pcap-rec-meter-bar {
+	height: 100%;
+	width: 0%;
+	border-radius: 4px;
+	background: var(--interactive-accent);
+	transition: width 80ms linear;
+}
+
+button.pcap-rec-stop {
+	flex: 0 0 auto;
+	padding: 5px 14px;
+	font-weight: 600;
+	font-size: 13px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+/* the floating on-page recording bar: a HUD pinned to the bottom of the editor
+   while recording, shown only on the note the recording belongs to */
+.pcap-recbar {
+	position: fixed;
+	bottom: 30px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 40;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 14px;
+	border-radius: 12px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: var(--shadow-l);
+}
+
+.pcap-recbar.is-hidden {
+	display: none;
+}
+
+.pcap-recbar .pcap-rec-meter {
+	flex: 0 0 130px;
+	width: 130px;
+}
+
+button.pcap-recbar-btn {
+	flex: 0 0 auto;
+	padding: 5px 12px;
+	font-size: 13px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.pcap-live-hint {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.pcap-live-hint:empty {
+	display: none;
+}
+
+.pcap-live-panel {
+	background: var(--background-secondary);
+	border-radius: 8px;
+	font-size: 12.5px;
+}
+
+.pcap-live-panel:not(:empty) {
+	padding: 8px 10px;
+}
+
+.pcap-live-panel-title {
+	font-weight: 600;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-faint);
+	margin-bottom: 4px;
+}
+
+.pcap-live-action {
+	color: var(--text-normal);
+	font-size: 12.5px;
+	padding-top: 2px;
+}
+
+.ptc-ask-filters {
+	display: flex;
+	gap: 8px;
+	padding-bottom: 8px;
+}
+
+.pcap-live-status {
+	color: var(--text-muted);
+	font-size: 12.5px;
+}
+
+.pcap-live-turns {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.pcap-live-turn {
+	padding: 6px 9px;
+	border-radius: 7px;
+	background: var(--background-secondary);
+	font-size: 13px;
+	user-select: text;
+}
+
+.pcap-live-partial {
+	min-height: 1.4em;
+	color: var(--text-muted);
+	font-style: italic;
+	font-size: 13px;
+}
+
+.pcap-live-marks {
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 6px;
+}
+
+.pcap-live-mark {
+	color: var(--text-accent);
+	font-size: 12.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- the sidebar assistant chat ---------------- */
+
+.pa-chat {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	gap: 8px;
+}
+
+.pa-chat-head {
+	display: flex;
+	gap: 8px;
+	flex: 0 0 auto;
+	/* four controls in a sidebar that can be dragged narrow: wrap onto a second
+	   row rather than pushing Save summary out of reach */
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+.pa-chat-filter {
+	font-size: var(--font-ui-smaller);
+	height: auto;
+	padding: 2px 6px;
+	/* two of them share a row without crowding out the buttons */
+	max-width: 45%;
+}
+
+.pa-chat-log {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 2px;
+}
+
+.pa-chat-hint {
+	color: var(--text-muted);
+	font-size: 13px;
+	padding: 8px;
+}
+
+.pa-chat-b {
+	border-radius: 10px;
+	padding: 8px 10px;
+	max-width: 92%;
+	font-size: 14px;
+}
+
+.pa-chat-user {
+	align-self: flex-end;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	white-space: pre-wrap;
+}
+
+.pa-chat-assist {
+	align-self: flex-start;
+	background: var(--background-secondary);
+}
+
+.pa-chat-assist p:first-child {
+	margin-top: 0;
+}
+
+.pa-chat-assist p:last-child {
+	margin-bottom: 0;
+}
+
+.pa-chat-inputrow {
+	display: flex;
+	gap: 6px;
+	align-items: flex-end;
+	flex: 0 0 auto;
+}
+
+.pa-chat-input {
+	flex: 1;
+	resize: none;
+}
+
+/* the draft writer: rendered output area under the Generate button */
+.pcap-draft-out {
+	margin: 14px 0 4px;
+	max-height: 46vh;
+	overflow-y: auto;
+	padding: 10px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+	user-select: text;
+	white-space: normal;
+}
+
+.pcap-draft-out:empty {
+	display: none;
+}
+
+.pcap-draft-out p:first-child {
+	margin-top: 0;
+}
+
+/* emailing a page: the preview of what the reader actually gets, boxed like the
+   draft writer's output so the two modals read the same */
+.pcap-share-body {
+	margin: 6px 0 4px;
+	max-height: 34vh;
+	overflow-y: auto;
+	padding: 10px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+	user-select: text;
+}
+
+.pcap-share-body > :first-child {
+	margin-top: 0;
+}
+
+.pcap-share-body > :last-child {
+	margin-bottom: 0;
+}
+
+/* indent the per-section toggles under a settings sub-heading */
+.pcap-subsetting {
+	padding-left: 24px;
+	border-top: none;
+}
+
+/* settings: a search box, then a tab bar, so the long options list is grouped */
+.ptc-settings-search {
+	margin: 4px 0 10px;
+}
+
+.ptc-settings-search-input {
+	width: 100%;
+}
+
+.ptc-settings-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin: 2px 0 18px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* the compound selector outranks Obsidian's own settings-area button chrome
+   (a .vertical-tab-content button rule) so the tabs render flat, not as boxes */
+.ptc-settings-tabs button.ptc-settings-tab,
+.ptc-settings-tabs button.ptc-settings-tab:hover,
+.ptc-settings-tabs button.ptc-settings-tab:focus,
+.ptc-settings-tabs button.ptc-settings-tab:focus-visible,
+.ptc-settings-tabs button.ptc-settings-tab:active {
+	background: transparent;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	outline: none;
+	margin: 0 0 -1px 0;
+	padding: 7px 14px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-medium);
+	border-bottom: 2px solid transparent;
+	cursor: default;
+	transition: color 120ms ease, border-color 120ms ease;
+}
+
+.ptc-settings-tabs button.ptc-settings-tab:hover {
+	color: var(--text-normal);
+	border-bottom-color: var(--background-modifier-border-hover);
+}
+
+.ptc-settings-tabs button.ptc-settings-tab.is-active {
+	color: var(--text-accent);
+	font-weight: var(--font-semibold);
+	border-bottom-color: var(--interactive-accent);
+}
+
+/* the first heading inside a tab does not need its big top border */
+.ptc-settings-section:first-child .setting-item-heading {
+	border-top: none;
+	padding-top: 0;
+}
+
+/* a small help icon after a setting name; opens the soft card below */
+.ptc-setting-help {
+	display: inline-flex;
+	margin-left: 6px;
+	vertical-align: -3px;
+	color: var(--text-faint);
+	cursor: help;
+}
+
+.ptc-setting-help:hover {
+	color: var(--text-muted);
+}
+
+.ptc-setting-help .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+/* the help popover: a soft theme-colored card instead of the native black
+   tooltip; shows on hover, and a click pins it open */
+.ptc-help-pop {
+	position: fixed;
+	z-index: var(--layer-tooltip);
+	max-width: 340px;
+	padding: 8px 11px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: var(--shadow-s);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	line-height: 1.45;
+}
+
+/* the sticky Otter-style audio player + follow-along highlight. The bar mounts
+   on the (non-scrolling) content frame and pins to its bottom, so it stays put
+   while the transcript scrolls; the scroller reserves room so nothing hides. */
+.pa-has-player {
+	position: relative;
+}
+
+.pa-has-player .cm-scroller,
+.pa-has-player .markdown-reading-view {
+	padding-bottom: calc(var(--pa-player-h, 30px) + 12px);
+}
+
+.pa-player {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 15;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	/* height is set at runtime to the app's bottom-chrome bar (the vault/profile
+	   footer beside it), so the player's top edge lines up with it */
+	height: var(--pa-player-h, 30px);
+	box-sizing: border-box;
+	padding: 0 16px;
+	background: var(--background-primary);
+	border-top: 1px solid var(--background-modifier-border);
+	box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.07);
+}
+
+.pa-player-btn {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	background: transparent;
+	border: none;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.pa-player-btn:hover {
+	color: var(--text-normal);
+}
+
+.pa-player-btn.pa-player-play {
+	width: 26px;
+	height: 26px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-radius: 50%;
+}
+
+.pa-player-btn.pa-player-play:hover {
+	color: var(--text-on-accent);
+}
+
+.pa-player-skip {
+	position: absolute;
+	top: 52%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	font-size: 8px;
+	font-weight: 700;
+	pointer-events: none;
+}
+
+.pa-player-btn.pa-player-speed {
+	width: auto;
+	padding: 0 8px;
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+}
+
+.pa-player-time {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+	min-width: 3.4em;
+	text-align: center;
+}
+
+.pa-player-track {
+	position: relative;
+	flex: 1;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	cursor: pointer;
+}
+
+.pa-player-fill {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 0;
+	border-radius: 3px;
+	background: var(--interactive-accent);
+	pointer-events: none;
+}
+
+.pa-player-knob {
+	position: absolute;
+	top: 50%;
+	width: 12px;
+	height: 12px;
+	margin-left: -6px;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	transform: translateY(-50%);
+	pointer-events: none;
+}
+
+.pa-player-tip {
+	position: absolute;
+	bottom: 16px;
+	transform: translateX(-50%);
+	padding: 2px 8px;
+	border-radius: 6px;
+	background: var(--background-secondary-alt);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.1s ease;
+}
+
+.pa-player-tip.is-visible {
+	opacity: 1;
+}
+
+/* A section's opening paragraph. It is a real Setting so the theme cards it like
+   every other row and it lines up with the column, but it has no name and no
+   control, so reclaim that space and let the text run the card's full width. */
+.ptc-section-intro .setting-item-name,
+.ptc-section-intro .setting-item-control {
+	display: none;
+}
+
+.ptc-section-intro .setting-item-info {
+	margin-right: 0;
+}
+
+/* "Key set" / "No key" on a transcription provider heading. Every provider's
+   group is always shown, so this pill is what makes the tab answer "which of
+   these am I actually set up for" without opening each one. */
+.ptc-prov-pill {
+	margin-left: 8px;
+	padding: 1px 7px;
+	border-radius: 10px;
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	vertical-align: middle;
+}
+
+.ptc-prov-pill.is-set {
+	background: var(--background-modifier-success);
+	color: var(--text-normal);
+}
+
+.ptc-prov-pill.is-unset {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+/* The recognized capture sites. A dozen names inside a sentence is a paragraph
+   you have to read; as chips it is a list you scan, which is what the actual
+   question ("can I paste this?") needs. Compound selectors throughout: the
+   theme's own .setting-item rules outrank a lone class. */
+.pcap-sites-row .setting-item-control {
+	display: none;
+}
+
+.pcap-sites-row .setting-item-info {
+	margin-right: 0;
+}
+
+.pcap-site-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.pcap-sites-row .pcap-site-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 9px;
+	border-radius: 10px;
+	background: var(--background-modifier-border);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+	font-weight: 500;
+	line-height: 1.7;
+}
+
+/* a locked site is still supported, just not while signed out: muted rather
+   than warning-colored, since it is a precondition and not a problem */
+.pcap-sites-row .pcap-site-chip.is-login {
+	color: var(--text-muted);
+}
+
+.pcap-sites-row .pcap-site-chip.is-more {
+	background: transparent;
+	color: var(--text-faint);
+	font-style: italic;
+}
+
+.pcap-site-lock {
+	display: inline-flex;
+	align-items: center;
+}
+
+.pcap-site-lock .svg-icon {
+	width: 11px;
+	height: 11px;
+}
+
+.pcap-site-legend {
+	margin-top: 8px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.5;
+}
+
+/* The AI usage meter. Claude and transcription are two different bills, so they
+   get two cards and stay apart everywhere in this panel. */
+.pa-usage-head {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 12px;
+}
+
+.pa-usage-range {
+	flex: 1;
+}
+
+.pa-usage-empty {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	line-height: 1.5;
+}
+
+.pa-usage-totals {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 8px;
+}
+
+.pa-usage-card {
+	padding: 10px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+	text-align: center;
+}
+
+.pa-usage-card-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.pa-usage-card-value {
+	margin: 2px 0;
+	font-size: 1.35em;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.pa-usage-card-sub {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
+.pa-usage-h {
+	margin: 16px 0 6px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.pa-usage-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--font-ui-small);
+}
+
+.pa-usage-table th,
+.pa-usage-table td {
+	padding: 4px 6px;
+	text-align: left;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pa-usage-table th {
+	color: var(--text-muted);
+	font-weight: 600;
+}
+
+/* every column after the label is a number: right-align and stop the digits
+   from shifting as the meter ticks up */
+.pa-usage-table th:not(:first-child),
+.pa-usage-table td:not(:first-child) {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.pa-usage-note {
+	margin-top: 16px;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.45;
+}
+
+
+/* the one-command server install box: readable, selectable in one click,
+   scrolls sideways rather than wrapping a path mid-quote */
+.pa-install-cmd {
+	user-select: all;
+	overflow-x: auto;
+	padding: 8px 10px;
+	background: var(--background-secondary);
+	border-radius: 6px;
+	font-size: var(--font-ui-small);
+}
+
+/* Collapsible settings sections: a tab reads as a short list of topics, and
+   opening one is a click on its heading. The heading always stays visible, so
+   nothing is ever hidden without a labelled way back to it. */
+.ptc-settings-section .setting-item.ptc-section-head {
+	cursor: pointer;
+}
+.ptc-settings-section .setting-item.ptc-section-head .setting-item-name::after {
+	content: "";
+	display: inline-block;
+	margin-left: 0.5em;
+	border-left: 0.32em solid currentColor;
+	border-top: 0.32em solid transparent;
+	border-bottom: 0.32em solid transparent;
+	transform: rotate(90deg);
+	opacity: 0.55;
+	transition: transform 120ms ease;
+	vertical-align: middle;
+}
+.ptc-settings-section.ptc-collapsed .setting-item.ptc-section-head .setting-item-name::after {
+	transform: rotate(0deg);
+}
+.ptc-settings-section.ptc-collapsed > *:not(.ptc-section-head) {
+	display: none;
+}
+
+/* Two columns on a wide settings pane. The page was a single narrow ribbon of
+   rows down the middle of a very wide modal, so short rows (a toggle, a
+   dropdown, a button) now sit two-up and the page loses about a quarter of its
+   height. Anything with a text field, a text area, or a slider keeps the full
+   width: those controls need the room, and squeezing a folder path into half a
+   column trades scrolling for squinting.
+
+   auto-fit means this collapses back to one column on a narrow window or a
+   phone with no media query, and `dense` lets a short row backfill the gap
+   left beside a full-width one instead of stranding it. */
+.ptc-settings-section {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+	grid-auto-flow: row dense;
+	column-gap: 26px;
+	align-items: start;
+}
+.ptc-settings-section > .setting-item-heading,
+.ptc-settings-section > .ptc-section-intro,
+.ptc-settings-section > .setting-item:has(input[type="text"]),
+.ptc-settings-section > .setting-item:has(input[type="password"]),
+.ptc-settings-section > .setting-item:has(input[type="search"]),
+.ptc-settings-section > .setting-item:has(input[type="number"]),
+.ptc-settings-section > .setting-item:has(textarea),
+.ptc-settings-section > .setting-item:has(.slider),
+.ptc-settings-section > .setting-item:has(select),
+.ptc-settings-section > .setting-item:has(input[type="range"]) {
+	grid-column: 1 / -1;
+}
+
+/* ---------- last-edited stamp ----------
+   A quiet line on the note itself, drawn only in vaults without Power Editor,
+   which owns this where both are installed. Click swaps the relative time for
+   the exact one. */
+
+.ptc-edited {
+	font-size: 0.78em;
+	color: var(--text-faint);
+	width: fit-content;
+	cursor: pointer;
+	user-select: none;
+	border-radius: 5px;
+	padding: 1px 5px;
+	margin: 0 0 0 -5px;
+	transition: color 120ms ease, background 120ms ease;
+}
+
+.ptc-edited:hover {
+	color: var(--text-muted);
+	background: var(--background-modifier-hover);
+}
+
+/* the stamp belongs to the title block, so it moves with a cover */
+.markdown-source-view .ptc-edited.is-title {
+	margin-bottom: 2px;
+}
+
+/* Pulled tight under the title with a hairline drawn between the two, so the
+   title and the date read as one page header instead of as two loose lines
+   floating above the first paragraph. The rule is the stamp's own top border
+   rather than a border on the title: it then travels with the stamp, and a
+   title that wraps to two lines cannot leave the line stranded. The title's
+   own bottom gap is closed only when this stamp actually follows it. */
+.inline-title:has(+ .ptc-edited.is-rule) {
+	margin-bottom: 0;
+}
+
+/* The gap below has to hold the note's first block off the header. Prose
+   brings no top spacing of its own, so the margin is all there is; a heading
+   brings plenty, and .is-tight (set by the plugin when the note opens on one)
+   gets out of its way rather than stacking on top of it. */
+.ptc-edited.is-title.is-rule {
+	width: 100%;
+	max-width: 100%;
+	margin: 4px 0 10px;
+	padding: 5px 0 0;
+	border-top: 1px solid var(--background-modifier-border);
+	border-radius: 0;
+}
+
+.ptc-edited.is-title.is-rule.is-tight {
+	margin-bottom: 2px;
+}
+
+/* full-width hover fill would read as a selected row, so the rule variant
+   brightens the text alone, the way the footer one does */
+.ptc-edited.is-title.is-rule:hover {
+	background: transparent;
+	color: var(--text-muted);
+}
+
+/* At the end of the note it needs to read as a footer rather than as more
+   content, so it takes a hairline above it and sits clear of the last
+   paragraph. It lives in .cm-sizer, so it scrolls with the note. */
+.ptc-edited.is-bottom {
+	margin: 24px 0 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--background-modifier-border);
+	border-radius: 0;
+	width: 100%;
+	max-width: 100%;
+}
+
+.ptc-edited.is-bottom:hover {
+	background: transparent;
+	color: var(--text-muted);
+}
+
+/* ---------------- notices in a light theme ----------------
+   Obsidian paints every notice as a near-black slab. In a dark theme that is
+   just the UI; in a light one it reads as an error box, whatever it says, and
+   a progress count or a to-do total is not an error. Same shape and position,
+   the theme's own surface colors. A notice carrying .pw-self-styled brings its
+   own card (Power Desk's meeting reminder) and is left alone. */
+
+body.theme-light .notice:not(.pw-self-styled) {
+	background: var(--background-primary);
+	color: var(--text-normal);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+}
+
+body.theme-light .notice:not(.pw-self-styled) a {
+	color: var(--text-accent);
+}
+
+/* ---------- the meeting note template ----------
+   A body someone arranges by hand deserves the room to see it: full width of
+   the settings row (which the grid rule above already gives any item holding a
+   textarea) and a monospace face, so an indent or a stray space is visible
+   where it matters. */
+
+/* The control has to break out of the two-column settings row first: a body
+   someone writes by hand cannot be edited through a 140px slot on the right. */
+
+.setting-item.pcap-template-item {
+	display: block;
+}
+
+.setting-item.pcap-template-item > .setting-item-control {
+	width: 100%;
+	margin-top: 0.6em;
+	justify-content: flex-start;
+	align-items: flex-start;
+}
+
+textarea.pcap-template-area {
+	flex: 1;
+	width: 100%;
+	min-height: 11em;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.5;
+	resize: vertical;
+	white-space: pre;
+	tab-size: 2;
+}
+
+/* ---------- the plugin's own machine keys ----------
+   pa-parts holds where each part of a rotated recording starts, in
+   milliseconds. Every [m:ss] link in the transcript needs it to open the right
+   part at the right place, and nobody needs to look at it: "[0, 3900876]" in a
+   properties panel is noise wearing the clothes of information. Hidden, not
+   removed — the stamps still read it, and it is still there in the file.
+
+   Scoped to the pa- prefixed key on purpose: the plugin hides what it wrote,
+   and has no business hiding a property someone else uses. */
+
+.metadata-property[data-property-key="pa-parts"] {
+	display: none;
+}
