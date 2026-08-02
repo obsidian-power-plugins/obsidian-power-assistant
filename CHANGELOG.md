@@ -2,6 +2,17 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.89.0
+
+### Added
+
+- **A button that brings a post's counts up to date.** A capture is a snapshot: the views and likes in its properties are the numbers the post had the moment it was filed, and a post that is still circulating leaves them behind within the hour. A refresh icon now sits in the header of any captured post or video, next to the note's other actions; one click re-reads the source and writes down whatever moved. The same thing is on the note's right-click menu and in the command palette as **Refresh this post's counts**, so it can take a hotkey. It appears only where there is something to refresh, which is a captured post or video and not a web page or a recorded meeting. Obsidian's properties panel is closed to plugins, so the button cannot sit directly beside the numbers it updates; the note header is as close as one can get without writing a widget into the note itself.
+- Only views, likes and replies are touched. Everything else a capture holds describes a post that has already been posted, and re-reading must not disturb any of it: not the title, not the post's own words, not the notes extracted from them. A count the fresh read cannot see is left alone rather than blanked, so a post with no video, whose counts come from X's embed payload instead of yt-dlp, keeps the view count it already had.
+
+### Fixed
+
+- **A post captured through yt-dlp records its reply count.** yt-dlp calls it the comment count and the plugin was not reading it, so the same post filed with a video had no `replies` property while one filed without a video did. Both now record it, and refreshing a note written before this fills the property in.
+
 ## 1.88.0
 
 ### Added

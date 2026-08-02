@@ -437,6 +437,36 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(vid.info.likes, 105510, "the counts are still read off the payload");
 	eq(parseTweetEmbed({ text: "Just words", user: { screen_name: "a" } }).hasVideo, undefined, "a text post reports no video rather than false");
 
+	// --- re-reading a captured post's counts ---
+	// A capture is a snapshot; likes and views keep moving after it is filed.
+	{
+		const { refreshableSource, statUpdates, statSummary } = require("./pipeline");
+		const post = { tags: ["capture"], source: "https://x.com/elonmusk/status/2082243743013614012" };
+		eq(refreshableSource(post), "https://x.com/elonmusk/status/2082243743013614012", "a captured post can be read again");
+		eq(refreshableSource({ type: "capture", source: "https://www.youtube.com/watch?v=abc" }), "https://www.youtube.com/watch?v=abc", "so can any other site yt-dlp handles");
+		eq(refreshableSource({ tags: ["capture"], source: "https://example.com/an-article" }), null, "a web page has no counts to re-read");
+		eq(refreshableSource({ tags: ["capture"] }), null, "and neither has a note with no source");
+		eq(refreshableSource({ tags: ["capture"], source: "Recordings/meeting.webm" }), null, "a recording's path is not a source to ask");
+		eq(refreshableSource({ source: "https://x.com/a/status/1" }), null, "a note that is not a capture is left alone");
+		eq(refreshableSource(null), null, "and so is a note with no frontmatter at all");
+
+		const current = { views: "8,352,500", likes: "105,512", replies: "3,843" };
+		eq(statUpdates(current, { title: "t", views: 8361004, likes: 105530, replies: 3843 }).map((u: { key: string }) => u.key), ["views", "likes"], "only the counts that moved are written");
+		eq(statUpdates(current, { title: "t", views: 8361004 })[0], { key: "views", from: "8,352,500", to: "8,361,004" }, "an update carries what it was, for the notice");
+		eq(statUpdates(current, { title: "t", views: 8352500, likes: 105512, replies: 3843 }), [], "an unchanged post reports nothing to write");
+		// the fallback read knows likes and replies but never views, and must not
+		// erase a view count it simply could not see
+		eq(statUpdates(current, { title: "t", likes: 105530 }).map((u: { key: string }) => u.key), ["likes"], "a count the fresh read lacks is left alone, not blanked");
+		eq(statUpdates({}, { title: "t", replies: 12 })[0], { key: "replies", from: null, to: "12" }, "a property the note never had is added");
+		eq(statUpdates(current, { title: "t" }), [], "a read that found no counts changes nothing");
+		eq(statSummary([{ key: "views", from: "8,352,500", to: "8,361,004" }]), "views 8,352,500 to 8,361,004", "the notice says what moved and to what");
+		eq(statSummary([{ key: "replies", from: null, to: "12" }]), "replies (none) to 12", "a count that was not there says so without an em dash");
+	}
+
+	// yt-dlp reports the reply count under its own name; a post captured through it
+	// records the same property as one read from the embed payload
+	eq(parseMediaInfo({ comment_count: 3843, view_count: 8352657, like_count: 105515 }, "X").replies, 3843, "yt-dlp's comment count is the reply count");
+
 	// the guard that keeps a refusal out of a note: nothing to summarize, nothing asked
 	ok(!hasWordsToExtract("https://t.co/XneE327cx9"), "a bare URL is nothing to extract from");
 	ok(!hasWordsToExtract("   \n  "), "and neither is whitespace");

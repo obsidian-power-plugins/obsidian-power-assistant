@@ -1349,6 +1349,10 @@ export interface MediaDump {
 	duration?: number;
 	view_count?: number;
 	like_count?: number;
+	/** yt-dlp's name for the reply count, which the embed payload calls the
+	 *  conversation count. Both mean the discussion a post drew, so a post
+	 *  captured either way records it under the same property. */
+	comment_count?: number;
 	extractor_key?: string;
 }
 
@@ -1376,8 +1380,61 @@ export function parseMediaInfo(j: MediaDump, siteLabel?: string | null): MediaIn
 	if (d) info.posted = `${d[1]}-${d[2]}-${d[3]}`;
 	if (typeof j.view_count === "number") info.views = j.view_count;
 	if (typeof j.like_count === "number") info.likes = j.like_count;
+	if (typeof j.comment_count === "number") info.replies = j.comment_count;
 	if (typeof j.duration === "number" && j.duration > 0) info.duration = humanDuration(j.duration);
 	return info;
+}
+
+/* ---------------- re-reading a captured post's counts ---------------- */
+
+/** The source URL of a capture whose counts are worth reading again, or null.
+ *
+ *  What a post says is settled the moment it is posted; how many people have
+ *  seen it is not, so a note filed last week reports last week's number. Only a
+ *  captured post or video has counts to re-read: a web page keeps none, and a
+ *  recorded meeting's source is a file on disk rather than something to ask. */
+export function refreshableSource(fm: Record<string, unknown> | null | undefined): string | null {
+	if (!isCaptureNote(fm as { type?: unknown; tags?: unknown } | null)) return null;
+	const src = typeof fm?.source === "string" ? fm.source.trim() : "";
+	if (!/^https?:\/\//i.test(src)) return null;
+	return routeFor(src) === "web" ? null : src;
+}
+
+/** One count that a re-read moved. */
+export interface StatUpdate {
+	key: string;
+	/** What the note said before, or null when it had no such property. */
+	from: string | null;
+	to: string;
+}
+
+/** The count properties a fresh read would change, and what they were.
+ *
+ *  Only the three that move. Everything else a capture stores describes the post
+ *  as it was written — its author, its date, its words — and re-reading must not
+ *  disturb any of it. A count the fresh read knows nothing about is left alone
+ *  rather than blanked: yt-dlp reports views and X's embed payload does not, so
+ *  a refresh that fell back to the embed must not erase a number it merely could
+ *  not see. */
+export function statUpdates(current: Record<string, unknown> | null | undefined, fresh: MediaInfo): StatUpdate[] {
+	const out: StatUpdate[] = [];
+	for (const [key, n] of [
+		["views", fresh.views],
+		["likes", fresh.likes],
+		["replies", fresh.replies],
+	] as const) {
+		if (typeof n !== "number") continue;
+		const to = n.toLocaleString("en-US");
+		const raw = current?.[key];
+		const from = raw == null || raw === "" ? null : String(raw);
+		if (from !== to) out.push({ key, from, to });
+	}
+	return out;
+}
+
+/** What moved, for the notice that says so: "views 8,352,500 to 8,361,004". */
+export function statSummary(updates: StatUpdate[]): string {
+	return updates.map((u) => `${u.key} ${u.from ?? "(none)"} to ${u.to}`).join(", ");
 }
 
 /** The extra frontmatter properties for a captured post, in a stable order.

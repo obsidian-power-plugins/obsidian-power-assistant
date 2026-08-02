@@ -254,6 +254,9 @@ import {
 	today,
 	daysAgo,
 	clockOf,
+	refreshableSource,
+	statUpdates,
+	statSummary,
 	ytDlpInvocations,
 	ytDlpInfoArgs,
 	ytDlpAudioArgs,
@@ -1174,6 +1177,17 @@ export default class PowerAssistantPlugin extends Plugin {
 			callback: () => new LinkModal(this.app, this, "web").open(),
 		});
 		this.addCommand({ id: "mark-moment", icon: "flag", name: "Mark this moment (while recording)", callback: () => this.markMoment() });
+		this.addCommand({
+			id: "refresh-post-stats", icon: "refresh-cw",
+			name: "Refresh this post's counts",
+			checkCallback: (checking) => {
+				const f = this.app.workspace.getActiveFile();
+				const fm = f ? (this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) : undefined;
+				const ok = !!f && !!refreshableSource(fm);
+				if (!checking && ok) void this.refreshPostStats(f);
+				return ok;
+			},
+		});
 		const activeCapture = (): TFile | null => {
 			const f = this.app.workspace.getActiveFile();
 			if (!f || f.extension !== "md") return null;
@@ -1462,6 +1476,17 @@ export default class PowerAssistantPlugin extends Plugin {
 			callback: () => void this.syncIndex(true).then((n) => new Notice(`Power Assistant: indexed ${n} note(s).`)),
 		});
 
+		// The refresh button follows whatever note is in front. The metadata hook
+		// matters for a note just captured: its frontmatter reaches the cache after
+		// the pane already opened it, and the button would otherwise wait for the
+		// next time the note came forward.
+		const syncActions = () => this.syncPostActions();
+		this.registerEvent(this.app.workspace.on("active-leaf-change", syncActions));
+		this.registerEvent(this.app.workspace.on("file-open", syncActions));
+		this.registerEvent(this.app.workspace.on("layout-change", syncActions));
+		this.registerEvent(this.app.metadataCache.on("changed", syncActions));
+		this.app.workspace.onLayoutReady(syncActions);
+
 		// Right-click any audio file → Process; any capture note → Ask / Rename.
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, af) => {
@@ -1514,6 +1539,13 @@ export default class PowerAssistantPlugin extends Plugin {
 				menu.addItem((i) => i.setTitle("Email this page…").setIcon("mail").onClick(() => void this.sharePage(af)));
 				const fm = this.app.metadataCache.getFileCache(af)?.frontmatter as { type?: string; tags?: unknown } | undefined;
 				if (!isCaptureNote(fm)) return;
+				// only a captured post has counts to re-read, so this is offered on one
+				// and not on a recorded meeting
+				if (refreshableSource(fm as Record<string, unknown>)) {
+					menu.addItem((i) =>
+						i.setTitle("Refresh this post's counts").setIcon("refresh-cw").onClick(() => void this.refreshPostStats(af))
+					);
+				}
 				menu.addItem((i) =>
 					i.setTitle("Ask about this meeting…").setIcon("message-circle").onClick(() => void this.openMeetingAsk(af))
 				);
@@ -7445,6 +7477,77 @@ export default class PowerAssistantPlugin extends Plugin {
 			filename: o.notePath,
 		});
 		await this.writeNote(o.notePath, o.folder, note);
+	}
+
+	/** Read a captured post's counts again and write down the ones that moved.
+	 *
+	 *  A capture is a snapshot, and its counts age: the note says what the post
+	 *  had been seen by the day it was filed. This asks the source once more and
+	 *  updates only views, likes and replies. Nothing else in the note is
+	 *  touched — not the title, not the post's words, not the notes extracted
+	 *  from them — because nothing else about a post that has already been posted
+	 *  can have changed.
+	 *
+	 *  yt-dlp goes first: it is the only one of the two that knows the view
+	 *  count. X's embed payload is the fallback, for a post with no video that
+	 *  yt-dlp refuses, and which has no views to report anyway. */
+	async refreshPostStats(file: TFile) {
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+		const url = refreshableSource(fm);
+		if (!url) return;
+		new Notice("Power Assistant: re-reading the post…");
+		let fresh: MediaInfo | null = null;
+		try {
+			const out = await this.runYtDlp(ytDlpInfoArgs(url, this.settings.cookieBrowser, this.settings.cookieFile), 60_000);
+			fresh = parseMediaInfo(JSON.parse(out.trim().split("\n")[0] || "{}") as MediaDump, mediaSiteFor(url)?.label);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			// the same two forgivable answers as a capture: the program is absent, or
+			// the post has nothing to play. Anything else is a real failure
+			if (!(e instanceof YtDlpMissing) && !NO_MEDIA_RE.test(msg)) {
+				new Notice("Power Assistant: could not re-read that post. " + msg, 10000);
+				return;
+			}
+			fresh = isXUrl(url) ? ((await this.readTweetText(url))?.info ?? null) : null;
+		}
+		if (!fresh) {
+			new Notice("Power Assistant: could not read that post's counts just now.", 8000);
+			return;
+		}
+		const updates = statUpdates(fm, fresh);
+		if (!updates.length) {
+			new Notice("Power Assistant: the counts have not moved.", 5000);
+			return;
+		}
+		await this.app.fileManager.processFrontMatter(file, (f: Record<string, unknown>) => {
+			for (const u of updates) f[u.key] = u.to;
+		});
+		new Notice("Power Assistant: " + statSummary(updates), 8000);
+	}
+
+	/** Keep the refresh button on the notes that have counts, and off the ones
+	 *  that do not.
+	 *
+	 *  Obsidian's properties panel is closed to plugins, so the button that
+	 *  belongs beside the counts goes into the note's own header instead, where
+	 *  a note's other actions already live. Synced rather than added once: one
+	 *  pane shows many notes over its life, and a button left behind on a meeting
+	 *  note would be a button that refreshes nothing. */
+	private syncPostActions() {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view as MarkdownView;
+			if (!view?.containerEl) continue;
+			const file = view.file;
+			const had = view.containerEl.querySelector<HTMLElement>(".pa-refresh-stats");
+			const fm = file ? (this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined) : undefined;
+			const wants = !!file && !!refreshableSource(fm);
+			if (wants && !had) {
+				const el = view.addAction("refresh-cw", "Refresh this post's counts", () => void this.refreshPostStats(view.file as TFile));
+				el.addClass("pa-refresh-stats");
+			} else if (!wants && had) {
+				had.remove();
+			}
+		}
 	}
 
 	/** Capture any site yt-dlp handles. One method serves all of them because
