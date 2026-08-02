@@ -166,3 +166,9 @@ Paid third-party keys are optional end to end: self-host WhisperX for speaker-la
 ## The MCP bridge
 
 A standalone Model Context Protocol server in [`mcp/`](mcp/) exposes this vault to Claude Desktop and Claude Code. See `mcp/README.md` to connect it.
+
+## Support
+
+Power Assistant is built and maintained by one person. If it earns a place in your
+daily vault, you can [buy me a coffee](https://buymeacoffee.com/powerplugins).
+Nothing in the plugin is held back either way.
