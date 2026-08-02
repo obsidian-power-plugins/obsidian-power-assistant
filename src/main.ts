@@ -4734,7 +4734,12 @@ export default class PowerAssistantPlugin extends Plugin {
 			const days = this.settings.mailWindowDays;
 			const sinceMs = Date.now() - days * 86400000;
 			const incoming = await feed(sinceMs);
-			const today = dayOf(new Date());
+			// UTC, unlike every other day in this file, and deliberately. The window
+			// places each message by `isoDate(m.date)` — the date Graph stamped on
+			// it, which is UTC — so the horizon has to be measured in the same days.
+			// Read off the local clock, the two sides fall a day apart every evening
+			// west of Greenwich and a day of mail sits past the horizon.
+			const today = new Date().toISOString().slice(0, 10);
 			const { add, drop } = planWindowUpdate(incoming, new Set(this.mailMeta.keys()), this.mailDates, today, days);
 			for (const id of drop) this.removeMailDoc(id);
 			for (const d of add) this.addMailDoc(d);

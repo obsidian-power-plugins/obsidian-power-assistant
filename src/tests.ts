@@ -4102,6 +4102,15 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 	// THE ONE THAT MATTERS: an undateable message must not slip in as "recent"
 	ok(!inWindow("", "2026-07-19", 90), "a message with no date is treated as outside the window");
 
+	// Both sides of the comparison have to be reading the same clock. A message's
+	// day is whatever its timestamp says in UTC, because that is what Graph put on
+	// it and all isoDate does is slice the string — so the `today` main.ts hands
+	// planWindowUpdate is UTC too, the one date in the plugin that is not local.
+	eq(isoDate("2026-08-02T02:16:33Z"), "2026-08-02", "a message sent at 9:16 PM Central belongs to the next UTC day");
+	ok(!inWindow("2026-07-26T02:00:00Z", "2026-08-02", 6), "the horizon is measured in those same UTC days");
+	ok(inWindow("2026-07-27T02:00:00Z", "2026-08-02", 6), "and the day after it is still inside");
+	ok(inWindow("2026-07-26T02:00:00Z", "2026-08-01", 6), "a local today would hold a day of mail past the horizon, which is why that one stays UTC");
+
 	// -- sender parsing --
 	eq(senderName('"Amazon.com" <auto-confirm@amazon.com>'), "Amazon.com", "a quoted display name is extracted");
 	eq(senderName("Dana Reed <dana@example.com>"), "Dana Reed", "an unquoted display name is extracted");
