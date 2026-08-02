@@ -2,6 +2,12 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.89.1
+
+### Fixed
+
+- **A long recording is no longer abandoned mid-write.** Reading and writing a recording's audio were both allowed a flat ten seconds, which covers a two-minute voice memo and comes nowhere near a three-hour meeting: a 60 MB file written into a vault that lives inside a synced folder needs far longer, so a perfectly healthy write was called failed while its bytes were still landing, and the capture was reported lost. Losing that race did not stop the write either, so Obsidian carried on and left a part-written recording in the vault, which is exactly the shape a vault syncer picks up and uploads as though it were the whole file. The budget now scales with the size (thirty seconds at minimum, three more per megabyte, so 60 MB gets three minutes), the write is followed to its end rather than left running, and a fragment is cleared if it never finishes. Applies to the blob read, the recording write, and the crash-recovery write, which was on the same flat ten seconds.
+
 ## 1.89.0
 
 ### Added
