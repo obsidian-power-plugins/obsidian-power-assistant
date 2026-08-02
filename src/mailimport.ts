@@ -263,7 +263,7 @@ export function buildSenderReport(stats: readonly SenderStat[], folder: string, 
 	if (noisy.length)
 		parts.push(
 			`## Never focused, and frequent\n\nOutlook has never marked these focused. Add any you agree with as block rules:\n\n` +
-				noisy.map((s) => `- \`${s.address}\` — ${s.threads} threads`).join("\n")
+				noisy.map((s) => `- \`${s.address}\`, ${s.threads} threads`).join("\n")
 		);
 	return parts.join("\n\n") + "\n";
 }

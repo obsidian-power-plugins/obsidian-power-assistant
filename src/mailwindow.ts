@@ -3,8 +3,8 @@
  * message into a synced note.
  *
  * Everything here is pure and deterministic; main.ts owns the SearchIndex, the
- * network pull from Power Desk, and persistence. The window is derived data —
- * it can be rebuilt from the mailbox at any time — so it lives in the plugin's
+ * network pull from Power Desk, and persistence. The window is derived data
+ * it can be rebuilt from the mailbox at any time, so it lives in the plugin's
  * own folder and never syncs.
  *
  * Two things shape the design. Email is bulky and mostly noise, so a message is
@@ -86,7 +86,7 @@ export function chunkMailForIndex(doc: MailDoc, cap = 4000): { heading: string; 
 	const body = collapse(doc.text);
 	if (!subject && !body) return null;
 	// the sender is worth indexing too, so "what did Dana send" can match
-	const head = [subject, senderName(doc.from)].filter(Boolean).join(" — ");
+	const head = [subject, senderName(doc.from)].filter(Boolean).join(", ");
 	return { heading: head || "(no subject)", text: body.slice(0, cap) };
 }
 

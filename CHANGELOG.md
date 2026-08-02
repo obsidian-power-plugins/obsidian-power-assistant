@@ -18,21 +18,21 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 ### Fixed
 
 - **A post captured through yt-dlp records its reply count.** yt-dlp calls it the comment count and the plugin was not reading it, so the same post filed with a video had no `replies` property while one filed without a video did. Both now record it, and refreshing a note written before this fills the property in.
-- **The mail window keeps both hands on the same clock.** Moving every date onto the local clock swept up one that has to stay in Greenwich. The rolling index of recent mail places each message by the date Microsoft stamped on it, which is UTC, and then measures the horizon from today — so if today is read locally the two sides fall a day apart every evening west of Greenwich, and a day's mail that should have aged out stays in the index. It is the one date in the plugin that is not yours, because it is not about a day you named; it now says so where it is written, and the tests say what would go wrong if it changed back.
-- **The MCP server stops calling tomorrow's bill overdue.** 1.88.0 moved every date the plugin writes onto the local clock and missed one reader: the standalone MCP server in `mcp/`, which is not part of the plugin bundle and was not swept up with it. Its `finances_summary` decided which bills are late by comparing their due dates — dates the plugin wrote off your own calendar — against the day in Greenwich, so from the early evening onward a bill due tomorrow was reported to Claude as already overdue. It reads the local day now, from its own copy of `dayOf`, having no build step to import the plugin's through.
+- **The mail window keeps both hands on the same clock.** Moving every date onto the local clock swept up one that has to stay in Greenwich. The rolling index of recent mail places each message by the date Microsoft stamped on it, which is UTC, and then measures the horizon from today, so if today is read locally the two sides fall a day apart every evening west of Greenwich, and a day's mail that should have aged out stays in the index. It is the one date in the plugin that is not yours, because it is not about a day you named; it now says so where it is written, and the tests say what would go wrong if it changed back.
+- **The MCP server stops calling tomorrow's bill overdue.** 1.88.0 moved every date the plugin writes onto the local clock and missed one reader: the standalone MCP server in `mcp/`, which is not part of the plugin bundle and was not swept up with it. Its `finances_summary` decided which bills are late by comparing their due dates (dates the plugin wrote off your own calendar) against the day in Greenwich, so from the early evening onward a bill due tomorrow was reported to Claude as already overdue. It reads the local day now, from its own copy of `dayOf`, having no build step to import the plugin's through.
 
 ## 1.88.0
 
 ### Added
 
-- **A fresh install says it needs setting up, once.** Nothing here transcribes or extracts without a transcription provider or an AI model, and an install with neither gave no sign of it until the first capture failed — which teaches the same lesson at the worst possible moment, since by then the meeting has already happened. A new install now says so at load, with a link straight to the setup tab. Said once and never again: the notice records that it has been shown, and an install that has either a provider or a model never sees it.
-- **The ribbon icons can be turned off.** Four icons on a strip shared with every other plugin is a lot to claim, and not everyone wants all of them. Each can now be switched off under Ribbon icons in settings: the microphone, the calendar, the sunrise, the sparkles. Turning one off hides only the icon — its command still works, so nothing becomes unreachable. The strip updates as you flip each toggle rather than at the next reload.
+- **A fresh install says it needs setting up, once.** Nothing here transcribes or extracts without a transcription provider or an AI model, and an install with neither gave no sign of it until the first capture failed, which teaches the same lesson at the worst possible moment, since by then the meeting has already happened. A new install now says so at load, with a link straight to the setup tab. Said once and never again: the notice records that it has been shown, and an install that has either a provider or a model never sees it.
+- **The ribbon icons can be turned off.** Four icons on a strip shared with every other plugin is a lot to claim, and not everyone wants all of them. Each can now be switched off under Ribbon icons in settings: the microphone, the calendar, the sunrise, the sparkles. Turning one off hides only the icon, its command still works, so nothing becomes unreachable. The strip updates as you flip each toggle rather than at the next reload.
 
 ### Fixed
 
-- **A post that is all video no longer becomes a note about nothing.** X appends a link to its own media to the end of every post carrying a photo or video, so a post with no words of its own arrives looking like a one-line post whose line is a link. Capture read the link as the post's text, sent it off to be summarized, and filed the model's reply — that it cannot summarize a URL — under the heading where the summary belongs. Those links are now recognized for what they are (in both spellings: the real `t.co` address the embed reports, and the `pic.x.com` display form oEmbed renders), and a post left with no words is treated as having none. Nothing to summarize now means nothing is asked, so a refusal can no longer land in a note. The same reading applies to a quoted or replied-to post, which used to be able to contribute a bare link as context.
+- **A post that is all video no longer becomes a note about nothing.** X appends a link to its own media to the end of every post carrying a photo or video, so a post with no words of its own arrives looking like a one-line post whose line is a link. Capture read the link as the post's text, sent it off to be summarized, and filed the model's reply (that it cannot summarize a URL) under the heading where the summary belongs. Those links are now recognized for what they are (in both spellings: the real `t.co` address the embed reports, and the `pic.x.com` display form oEmbed renders), and a post left with no words is treated as having none. Nothing to summarize now means nothing is asked, so a refusal can no longer land in a note. The same reading applies to a quoted or replied-to post, which used to be able to contribute a bare link as context.
 - **And it says which program would have captured it.** A wordless video post is not an empty post: its words are in its audio, and yt-dlp is what fetches audio. Capture now says that, names yt-dlp, and stops, rather than writing a note that will have to be deleted. When yt-dlp is installed, that post captures the way it always should have. The check happens before a folder or a filename is worked out, so the message is about the post rather than about a note that does not exist.
-- **Evenings stop being filed under tomorrow.** Every date the plugin wrote was the date in Greenwich, so from early evening onward — seven at night in New York, nine in Chicago, five on the west coast — a note named itself for a day that had not started yet. A meeting recorded on Saturday night was called Sunday's, sorted ahead of Sunday morning, and sat outside the week that was supposed to contain it; the same hour shifted `date` in the properties, the weekly digest's span, the morning briefing's horizon, the seven-day windows behind "recently", and the timestamp on a recording's filename. All of them now read the day off the local clock. The relative ones count days along the calendar instead of subtracting twenty-four hours at a time, so the two mornings a year the clocks move no longer push a boundary onto the wrong date. The one place still working in UTC is the calendar fetch, which hands Microsoft an exact moment rather than a day, and is right to. Notes written before this are unchanged: a note dated a day ahead keeps the date it was given, since only you know which of them were late nights.
+- **Evenings stop being filed under tomorrow.** Every date the plugin wrote was the date in Greenwich, so from early evening onward (seven at night in New York, nine in Chicago, five on the west coast) a note named itself for a day that had not started yet. A meeting recorded on Saturday night was called Sunday's, sorted ahead of Sunday morning, and sat outside the week that was supposed to contain it; the same hour shifted `date` in the properties, the weekly digest's span, the morning briefing's horizon, the seven-day windows behind "recently", and the timestamp on a recording's filename. All of them now read the day off the local clock. The relative ones count days along the calendar instead of subtracting twenty-four hours at a time, so the two mornings a year the clocks move no longer push a boundary onto the wrong date. The one place still working in UTC is the calendar fetch, which hands Microsoft an exact moment rather than a day, and is right to. Notes written before this are unchanged: a note dated a day ahead keeps the date it was given, since only you know which of them were late nights.
 
 ### Changed
 
@@ -42,19 +42,19 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Changed
 
-- **The part offsets stop showing themselves.** A rotated recording carries where each part starts, so every `[m:ss]` link in its transcript can open the right file at the right place — real work, and `[0, 3900876]` in a properties panel is still noise wearing the clothes of information. The key moved to `pa-parts`, beside `pa-recordings` and `pa-eval` where the plugin's other machine-only keys live, and that one key is hidden from the properties panel. Hidden, not removed: the stamps still read it and it is still in the file. Notes written before the rename still say `parts` and still work. Scoping the rule to the prefixed key matters — a plugin should hide what it wrote, not a property someone else uses.
+- **The part offsets stop showing themselves.** A rotated recording carries where each part starts, so every `[m:ss]` link in its transcript can open the right file at the right place (real work, and `[0, 3900876]` in a properties panel is still noise wearing the clothes of information. The key moved to `pa-parts`, beside `pa-recordings` and `pa-eval` where the plugin's other machine-only keys live, and that one key is hidden from the properties panel. Hidden, not removed: the stamps still read it and it is still in the file. Notes written before the rename still say `parts` and still work. Scoping the rule to the prefixed key matters) a plugin should hide what it wrote, not a property someone else uses.
 
 ## 1.87.0
 
 ### Changed
 
-- **Two properties fewer on a recorded meeting.** `source` repeated the path of a recording the player under the transcript already names, links and plays — three references to one file. It goes when there is a player, and stays when there is not: a recording set to be trashed after processing leaves the path as the only record of what was transcribed. `speakers` counted the voices and nothing read it; the **Speakers:** line under the title already says who spoke and how much, which is the useful form of the same fact.
+- **Two properties fewer on a recorded meeting.** `source` repeated the path of a recording the player under the transcript already names, links and plays, three references to one file. It goes when there is a player, and stays when there is not: a recording set to be trashed after processing leaves the path as the only record of what was transcribed. `speakers` counted the voices and nothing read it; the **Speakers:** line under the title already says who spoke and how much, which is the useful form of the same fact.
 
 ## 1.86.0
 
 ### Added
 
-- **Keep the meeting template as a note.** If you already keep templates as notes, point **Meeting template note** at one and its body becomes what a new meeting note starts with — written in the editor with live preview, synced with the vault, its history your vault's history. The magnifier picks one without typing a path. Its own properties are ignored: they describe the template, not the meeting, and the plugin writes the meeting's own. Tokens this plugin does not recognise pass through untouched, so a template shared with another tool keeps that tool's placeholders. A note that is later renamed or deleted says so once and falls back to the settings box, rather than failing the note you were trying to create.
+- **Keep the meeting template as a note.** If you already keep templates as notes, point **Meeting template note** at one and its body becomes what a new meeting note starts with, written in the editor with live preview, synced with the vault, its history your vault's history. The magnifier picks one without typing a path. Its own properties are ignored: they describe the template, not the meeting, and the plugin writes the meeting's own. Tokens this plugin does not recognize pass through untouched, so a template shared with another tool keeps that tool's placeholders. A note that is later renamed or deleted says so once and falls back to the settings box, rather than failing the note you were trying to create.
 
 ### Fixed
 
@@ -64,7 +64,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Changed
 
-- **A new meeting note starts with a checkbox.** The default template gained a **Follow-ups** section holding one empty `- [ ] `, between the notes and the agenda, so there is somewhere to put a commitment the moment it is made rather than after the fact. If you had not edited the template, yours moves to the new default on load; if you had, it is left exactly as you wrote it — an edited template is never overwritten.
+- **A new meeting note starts with a checkbox.** The default template gained a **Follow-ups** section holding one empty `- [ ] `, between the notes and the agenda, so there is somewhere to put a commitment the moment it is made rather than after the fact. If you had not edited the template, yours moves to the new default on load; if you had, it is left exactly as you wrote it, an edited template is never overwritten.
 
 ## 1.85.0
 
@@ -89,7 +89,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 ### Changed
 
 - **A video's length is written to be read.** `2:03:13` makes you count the colons to learn it is a two-hour podcast. Lengths now read `2 hr 3 min`, `43 min`, `31 sec`, on captured videos and social posts alike. Seconds are dropped once there are minutes to report. The transcript's own `[m:ss]` stamps are a different thing and are unchanged.
-- **No blank line between the properties and the note.** A capture whose filename already carries its title writes no heading, and the gap where that heading used to be stayed behind — so every such note opened with an empty line before its first section. The first heading now sits tight against the properties block, exactly where the title used to.
+- **No blank line between the properties and the note.** A capture whose filename already carries its title writes no heading, and the gap where that heading used to be stayed behind, so every such note opened with an empty line before its first section. The first heading now sits tight against the properties block, exactly where the title used to.
 
 ## 1.82.0
 
@@ -102,25 +102,25 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Changed
 
-- **A saved YouTube session is used, whatever its cookies are called.** Signing in through the TV pairing left a working session — the window came back showing the account, its recommendations and all — and the plugin refused to use it, because none of its 19 cookies were named what the sign-in check expected. That check now decides nothing: any session the sign-in window leaves behind is handed to yt-dlp, and whether it works is answered by YouTube rather than by a list of cookie names in here. The settings row says how many cookies are saved instead of claiming a verdict it cannot reach, and **Test YouTube** beside it is the thing that actually answers.
+- **A saved YouTube session is used, whatever its cookies are called.** Signing in through the TV pairing left a working session (the window came back showing the account, its recommendations and all) and the plugin refused to use it, because none of its 19 cookies were named what the sign-in check expected. That check now decides nothing: any session the sign-in window leaves behind is handed to yt-dlp, and whether it works is answered by YouTube rather than by a list of cookie names in here. The settings row says how many cookies are saved instead of claiming a verdict it cannot reach, and **Test YouTube** beside it is the thing that actually answers.
 
 ## 1.80.2
 
 ### Fixed
 
-- **A signed-in session is recognised as one.** Pairing a code signed the window in properly and the settings row still said "Not signed in", because the check was asking the session for cookies on two named domains and looking for four cookie names. A sign-in is not one cookie: which names it uses and where they land depend on how it was done, and a session paired from a television leaves a different set than a password typed into the website. The whole session is now read and filtered here, across every domain a Google sign-in spreads to, and any of the cookies that carry a sign-in counts. When it still finds none, it says how many cookies it did see and lists their names in the console, so the next answer is a fact rather than a guess.
+- **A signed-in session is recognized as one.** Pairing a code signed the window in properly and the settings row still said "Not signed in", because the check was asking the session for cookies on two named domains and looking for four cookie names. A sign-in is not one cookie: which names it uses and where they land depend on how it was done, and a session paired from a television leaves a different set than a password typed into the website. The whole session is now read and filtered here, across every domain a Google sign-in spreads to, and any of the cookies that carry a sign-in counts. When it still finds none, it says how many cookies it did see and lists their names in the console, so the next answer is a fact rather than a guess.
 
 ## 1.80.1
 
 ### Fixed
 
-- **Signing in no longer asks Google for something it will not give.** 1.80.0 opened YouTube's ordinary sign-in page, and Google answered "this browser or app may not be secure" — it does not accept a password typed into a window hosted by another app, which is a sensible rule and not one worth dodging. Sign in now uses the flow Google built for devices in exactly that position: the window opens YouTube's TV interface, you choose Sign in, and it shows a short code. You approve that code at youtube.com/activate in the browser you already trust, and the window is signed in. No password is ever typed inside Obsidian. There is a button beside Sign in that opens the activate page for you.
+- **Signing in no longer asks Google for something it will not give.** 1.80.0 opened YouTube's ordinary sign-in page, and Google answered "this browser or app may not be secure", it does not accept a password typed into a window hosted by another app, which is a sensible rule and not one worth dodging. Sign in now uses the flow Google built for devices in exactly that position: the window opens YouTube's TV interface, you choose Sign in, and it shows a short code. You approve that code at youtube.com/activate in the browser you already trust, and the window is signed in. No password is ever typed inside Obsidian. There is a button beside Sign in that opens the activate page for you.
 
 ## 1.80.0
 
 ### Added
 
-- **Sign in to YouTube from inside Obsidian.** YouTube increasingly answers a device it does not recognise with "Sign in to confirm you're not a bot", and being signed in on your browser does not help: a capture goes out from Obsidian and from yt-dlp, and neither can see your browser's cookies. So sign in here instead. **Settings → YouTube sign-in → Sign in** opens YouTube in its own window, you sign in exactly as you would anywhere, and you close it. Captures then go out as you, and the row says whether you are signed in.
+- **Sign in to YouTube from inside Obsidian.** YouTube increasingly answers a device it does not recognize with "Sign in to confirm you're not a bot", and being signed in on your browser does not help: a capture goes out from Obsidian and from yt-dlp, and neither can see your browser's cookies. So sign in here instead. **Settings → YouTube sign-in → Sign in** opens YouTube in its own window, you sign in exactly as you would anywhere, and you close it. Captures then go out as you, and the row says whether you are signed in.
 
   The session lives in this plugin's own store, separate from the rest of Obsidian, and is never written into your vault or into a note. When a capture needs it, it is handed to yt-dlp as a temporary file that is deleted the moment the download finishes. Sign out clears the whole thing.
 
@@ -145,7 +145,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Changed
 
-- **Automatic captions no longer arrive three times over.** YouTube's speech-recognised tracks are a rolling two-line display, so each cue repeats the line before it; pasted together, the transcript said everything two or three times, which read badly and cost that much again to extract. Overlapping words are now folded together, taking a real 371,000-character track down to the 124,000 characters that were actually said. Where a video offers both a human-written track and an automatic one, the human one is preferred.
+- **Automatic captions no longer arrive three times over.** YouTube's speech-recognized tracks are a rolling two-line display, so each cue repeats the line before it; pasted together, the transcript said everything two or three times, which read badly and cost that much again to extract. Overlapping words are now folded together, taking a real 371,000-character track down to the 124,000 characters that were actually said. Where a video offers both a human-written track and an automatic one, the human one is preferred.
 
 ## 1.78.1
 
@@ -224,7 +224,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Fixed
 
-- **A second post from the same day is no longer refused as a duplicate.** Every link capture checked whether a note already sat at the filename it had worked out, and gave up if one did. But that filename is the date plus the title, and a post's title is its own first words trimmed to fit a filename, so two different posts from one day that open the same way produced the same name and the second was dropped with a notice that read as "you already have this". The note in the way is now asked what it captured: the same link still stops the capture, and names the note that already has it, while anything else is written alongside as `-2`, the way two meetings on one day already were. Matching is by post or video id where there is one, so a share link with `?s=43&t=…` on it, the legacy `twitter.com` host, and a `youtu.be` short link are all recognised as the thing you already captured; other links compare without their query or trailing slash. Videos and web pages had the same guard and get the same fix.
+- **A second post from the same day is no longer refused as a duplicate.** Every link capture checked whether a note already sat at the filename it had worked out, and gave up if one did. But that filename is the date plus the title, and a post's title is its own first words trimmed to fit a filename, so two different posts from one day that open the same way produced the same name and the second was dropped with a notice that read as "you already have this". The note in the way is now asked what it captured: the same link still stops the capture, and names the note that already has it, while anything else is written alongside as `-2`, the way two meetings on one day already were. Matching is by post or video id where there is one, so a share link with `?s=43&t=…` on it, the legacy `twitter.com` host, and a `youtu.be` short link are all recognized as the thing you already captured; other links compare without their query or trailing slash. Videos and web pages had the same guard and get the same fix.
 
 ## 1.75.0
 
@@ -555,7 +555,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Fixed
 
-- **The player is now pinned to the bottom and ready immediately.** It no longer waits for you to scroll to the end of a long transcript — it drives the meeting's audio file directly and stays pinned to the bottom of the view while you scroll, so it is there from the moment the note opens.
+- **The player is now pinned to the bottom and ready immediately.** It no longer waits for you to scroll to the end of a long transcript, it drives the meeting's audio file directly and stays pinned to the bottom of the view while you scroll, so it is there from the moment the note opens.
 - **More spacing between turns** so the transcript is easier to read.
 
 ## 1.42.1
@@ -563,13 +563,13 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 ### Fixed
 
 - **The sticky player replaces the note's native audio player** instead of showing alongside it, and the status-bar labels no longer sit on top of it.
-- **The avatar no longer overlaps the speaker name** — it sits in a left gutter with the name and text aligned beside it, and the timestamp underline is gone.
+- **The avatar no longer overlaps the speaker name**, it sits in a left gutter with the name and text aligned beside it, and the timestamp underline is gone.
 
 ## 1.42.0
 
 ### Changed
 
-- **The transcript now reads like Otter.** In Edit mode each turn shows the speaker's name in bold with the time in gray beside it, the avatar centered in a left gutter, and the spoken text on its own line below — no row shading, no underlined time, no brackets.
+- **The transcript now reads like Otter.** In Edit mode each turn shows the speaker's name in bold with the time in gray beside it, the avatar centered in a left gutter, and the spoken text on its own line below: no row shading, no underlined time, no brackets.
 
 ## 1.41.1
 
@@ -588,13 +588,13 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Added
 
-- **Click a speaker's name** (not just the avatar) to open the speaker menu, and **click a timestamp to seek the audio** right from Edit mode — the same jump the reading view already had.
+- **Click a speaker's name** (not just the avatar) to open the speaker menu, and **click a timestamp to seek the audio** right from Edit mode, the same jump the reading view already had.
 
 ## 1.40.0
 
 ### Changed
 
-- **The transcript is now plain, always-editable text instead of a callout.** It no longer switches to raw `> …` source when you click into it. In Edit mode it stays styled — avatars, speaker colors, clickable timestamps — and you edit it in place, the same view whether you are reading or writing. Click a speaker's avatar to rename them, change their color, or set an emoji.
+- **The transcript is now plain, always-editable text instead of a callout.** It no longer switches to raw `> …` source when you click into it. In Edit mode it stays styled (avatars, speaker colors, clickable timestamps) and you edit it in place, the same view whether you are reading or writing. Click a speaker's avatar to rename them, change their color, or set an emoji.
 
 ### Added
 
@@ -621,7 +621,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Fixed
 
-- **The Edit-mode transcript card now actually renders.** The styling was being stripped from every line you selected, which in practice dropped the whole transcript back to raw `> …` source. It now stays styled — avatars, speaker colors, and hidden blockquote markers — while you read and edit inside it.
+- **The Edit-mode transcript card now actually renders.** The styling was being stripped from every line you selected, which in practice dropped the whole transcript back to raw `> …` source. It now stays styled (avatars, speaker colors, and hidden blockquote markers) while you read and edit inside it.
 
 ## 1.39.1
 
@@ -847,7 +847,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Added
 
-- **Finances rollup.** *Finances rollup* turns your processed bills and receipts into an overview note: totals per currency (never summed across currencies), upcoming and overdue bills sorted by due date, and spending grouped by vendor and by month. *Create the Finances base* drops a Power Bases file over the same documents — a sortable table colored by type and a calendar of due dates — so you can filter and sum them interactively.
+- **Finances rollup.** *Finances rollup* turns your processed bills and receipts into an overview note: totals per currency (never summed across currencies), upcoming and overdue bills sorted by due date, and spending grouped by vendor and by month. *Create the Finances base* drops a Power Bases file over the same documents (a sortable table colored by type and a calendar of due dates) so you can filter and sum them interactively.
 
 ## 1.24.0
 
@@ -1084,7 +1084,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Added
 
-- **Redaction for sharing/export.** Mask emails, phone numbers, SSNs, card numbers, custom terms, and optionally attendee names when you copy a summary or export to Word — the note itself is never modified. Includes a one-off *Copy redacted summary* command.
+- **Redaction for sharing/export.** Mask emails, phone numbers, SSNs, card numbers, custom terms, and optionally attendee names when you copy a summary or export to Word, the note itself is never modified. Includes a one-off *Copy redacted summary* command.
 - **Custom meeting templates.** Define your own named section presets in settings; they appear in the Process and Re-extract dialogs alongside the built-ins.
 - **Audio retention policy.** Keep recordings or automatically move them to trash after the note is written.
 - **Pause / resume recording**, with timestamps that stay aligned to the gapless audio.
@@ -1105,7 +1105,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 ### Added
 
-- **Export as Word document (.docx).** Right-click a capture note (or run the command) to produce a formatted Word recap — title block with attendees and the long date, styled section headings, and action items rendered as an Owner / Task / Deadline table — written to an Exports folder and opened in your default editor. Generated locally with the same `docx` library the commercial AI-notetaker tools use.
+- **Export as Word document (.docx).** Right-click a capture note (or run the command) to produce a formatted Word recap (title block with attendees and the long date, styled section headings, and action items rendered as an Owner / Task / Deadline table) written to an Exports folder and opened in your default editor. Generated locally with the same `docx` library the commercial AI-notetaker tools use.
 
 ## 1.0.0
 
@@ -1124,7 +1124,7 @@ First stable release. This version is about trust: nothing you capture is lost, 
 - **Per-series section defaults.** The Process dialog can remember its section choices for a meeting's series; matching recordings auto-extract those same sections.
 - **Auto weekly digest** (opt-in): the digest builds itself on the first launch of each week, quietly, if the week had meetings.
 
-## 0.9.0 — Meeting memory
+## 0.9.0, Meeting memory
 
 - Import Otter (.txt) and Teams/Zoom (.vtt, .srt) transcripts into first-class capture notes, no transcription key needed.
 - Person reports and 1:1 prep: open commitments, decisions, and meeting history per attendee, with a grounded agenda.
@@ -1134,14 +1134,14 @@ First stable release. This version is about trust: nothing you capture is lost, 
 - Live copilot: on-demand catch-up and a running commitment detector.
 - Per-note cost estimates; attendee and time-range filters on Ask.
 
-## 0.8.0 — Otter parity
+## 0.8.0, Otter parity
 
 - Talk-time shares with a Speakers line and a share-sorted naming dialog.
 - Retroactive speaker tagging with suggestions from past attendees.
 - Keywords extraction section.
 - Ask about this meeting: a chat scoped to one capture with starter chips.
 
-## 0.7.0 — Meeting intelligence
+## 0.7.0, Meeting intelligence
 
 - Clickable timestamps that seek the embedded audio.
 - Speaker naming inferred from the transcript, confirmed in a dialog.
@@ -1158,6 +1158,6 @@ First stable release. This version is about trust: nothing you capture is lost, 
 
 - Ask your vault (local BM25 index, cited answers); YouTube caption capture.
 
-## 0.3.0 – 0.2.0 – 0.1.0
+## 0.3.0, 0.2.0, 0.1.0
 
 - Speaker diarization via AssemblyAI; system-audio call capture and the per-file processor; the original record/drop → transcribe → extract pipeline.

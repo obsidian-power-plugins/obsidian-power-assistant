@@ -8,10 +8,10 @@ Obsidian is open.
 
 ## Tools
 
-- **search_notes** — keyword search across the vault, returns paths and excerpts.
-- **read_note** — the full Markdown of one note by path.
-- **list_recent_notes** — the most recently edited notes.
-- **finances_summary** — totals per currency and bills due, from processed documents.
+- **search_notes**, keyword search across the vault, returns paths and excerpts.
+- **read_note**, the full Markdown of one note by path.
+- **list_recent_notes**, the most recently edited notes.
+- **finances_summary**, totals per currency and bills due, from processed documents.
 
 ## Install
 

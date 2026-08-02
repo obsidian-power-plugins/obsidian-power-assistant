@@ -470,7 +470,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	// the guard that keeps a refusal out of a note: nothing to summarize, nothing asked
 	ok(!hasWordsToExtract("https://t.co/XneE327cx9"), "a bare URL is nothing to extract from");
 	ok(!hasWordsToExtract("   \n  "), "and neither is whitespace");
-	ok(!hasWordsToExtract("https://a.example/x — https://b.example/y"), "nor a line of links and punctuation");
+	ok(!hasWordsToExtract("https://a.example/x, https://b.example/y"), "nor a line of links and punctuation");
 	ok(hasWordsToExtract("Way more than a billion"), "two sentences of a post are");
 	ok(hasWordsToExtract("See https://a.example/x for the numbers"), "so are words around a link");
 
@@ -1031,7 +1031,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 	ok(/pa-screens:/.test(md.slice(0, md.indexOf("\n---\n", 4))), "and the manifest is still up in the frontmatter for next time");
 	ok(!md.includes("## Screens"), "with every frame placed there is no leftover section");
 	ok(md.includes("## Transcript") && md.includes("**A [0:01]:** hi"), "the transcript is still there afterwards");
-	ok(md.includes("ATLAS Architecture"), "and the caption travelled with its frame");
+	ok(md.includes("ATLAS Architecture"), "and the caption traveled with its frame");
 }
 {
 	const note = assembleNote({
@@ -1908,7 +1908,7 @@ ok(!isAnonymousLabel("Jo") && !isAnonymousLabel("Ed") && !isAnonymousLabel("TJ")
 	eq(appendWithoutOverlap("a b c", "d e"), "a b c d e", "unrelated text just appends");
 	eq(captionsToText("WEBVTT\n\n"), "", "an empty track is empty text");
 
-	ok(isSyncConflictName("capture-2026-07-23-12-35-19.part1 (sync conflict 2026-07-23 1340 211f13).webm"), "a keep-both copy is recognised");
+	ok(isSyncConflictName("capture-2026-07-23-12-35-19.part1 (sync conflict 2026-07-23 1340 211f13).webm"), "a keep-both copy is recognized");
 	ok(isSyncConflictName("notes (conflicted copy 2026-07-20).md"), "so is Dropbox's wording");
 	ok(!isSyncConflictName("capture-2026-07-23-12-35-19.part1.webm"), "the recording itself is not");
 	ok(!isSyncConflictName("2026-07-20 Conflict resolution workshop.md"), "and neither is a note that merely says conflict");
@@ -2016,7 +2016,7 @@ eq(taskOwner("- [ ] orphan task"), "Unassigned", "no link, unassigned");
 	ok(win.includes("recent one") && win.includes("recent two") && !win.includes("old old"), "catch-up window keeps recent turns");
 	ok(buildCatchUpPrompt("t", 10).user.includes("~10 minutes"), "catch-up prompt names the window");
 	ok(buildLiveActionsPrompt("t").system.includes("NONE"), "action prompt has a none escape");
-	eq(parseLineList("- Send deck — Jordan\nNONE\n2. Review terms\n\n"), ["Send deck — Jordan", "Review terms"], "line list parses, none dropped");
+	eq(parseLineList("- Send deck, Jordan\nNONE\n2. Review terms\n\n"), ["Send deck, Jordan", "Review terms"], "line list parses, none dropped");
 }
 {
 	const hits = [{ path: "a.md" }, { path: "b.md" }, { path: "c.md" }];
@@ -2473,7 +2473,7 @@ eq(memoAttendees([{ speaker: "A", text: "x", start: 0 }], ""), [], "no name set,
 eq(isoWeek("2026-07-12"), "2026-W28", "ISO week for a Sunday");
 eq(isoWeek("2026-07-13"), "2026-W29", "the next Monday rolls the week");
 eq(isoWeek("2026-01-01"), "2026-W01", "new year's day is week 1");
-ok(isoWeek("2026-07-06") === isoWeek("2026-07-12"), "a Mon–Sun span shares one week key");
+ok(isoWeek("2026-07-06") === isoWeek("2026-07-12"), "a Mon-Sun span shares one week key");
 
 // --- what day it is, where the user is ---
 // Every date these build is read off the local clock, so the assertions hold in
@@ -3054,8 +3054,8 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 	ok(b.includes("  > [!info]- Details") && b.includes("  > **Attendees:** Steve, Jordan") && b.includes("  > **Where:** Room 1"), "meeting details fold into an indented callout");
 	ok(b.includes("  > **Agenda:**") && b.includes("  > - Ship it"), "the agenda is inside the callout");
 	ok(b.includes("- Ad hoc") && !b.includes("Ad hoc|") && !/Ad hoc\n {2}>/.test(b), "a meeting with no details has no callout");
-	ok(b.includes("**Overdue (1)**") && b.includes("🔴 Send the deck — [[Steve]] · due 2026-07-10"), "overdue commitment flagged");
-	ok(b.includes("**Coming due (1)**") && b.includes("- Review PR · due 2026-07-16") && !b.includes("Review PR — [[Unassigned]]"), "unassigned owner is not linked");
+	ok(b.includes("**Overdue (1)**") && b.includes("🔴 Send the deck, [[Steve]] · due 2026-07-10"), "overdue commitment flagged");
+	ok(b.includes("**Coming due (1)**") && b.includes("- Review PR · due 2026-07-16") && !b.includes("Review PR, [[Unassigned]]"), "unassigned owner is not linked");
 	ok(b.includes("## Bills & documents due") && b.includes("[[Documents/Bills/2026/Meralco|Meralco bill]] · PHP 3400 · due 2026-07-17"), "due document listed");
 	ok(b.includes("## Open questions") && b.includes("Do we renew the license?"), "open questions carried");
 	ok(!/---\n\n# Good/.test(b), "no blank gap under the properties");
@@ -3257,7 +3257,7 @@ eq(redact("2026-07-14 is a date", { cards: true, ssns: true }), "2026-07-14 is a
 {
 	const r = redact("Jordan owns it; ping [[Jordan]] and Jordanson stays", { terms: ["Jordan"] });
 	ok(r.includes("[redacted] owns it") && r.includes("ping [redacted] and"), "a term masks plain and [[linked]] forms");
-	ok(r.includes("Jordanson stays"), "whole-word only — a longer name is untouched");
+	ok(r.includes("Jordanson stays"), "whole-word only, a longer name is untouched");
 }
 eq(redact("no config no change", {}), "no config no change", "empty config is a no-op");
 ok(!redactionActive({}) && !redactionActive({ terms: ["  "] }), "inactive configs report inactive");
@@ -3582,9 +3582,9 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 	const { redactSecrets, txnOrderName, txnItemName, txnFolder, txnSafe, buildOrderNote, buildItemNote, planOrderWrites } = require("./transactions");
 
 	// -- redaction --
-	eq(redactSecrets("Product Key: MXNY6-T84BP-FP26W-QYWM6-8TYP6"), "Product Key: [redacted key]", "a licence key is redacted");
-	ok(redactSecrets("Routing Number: 053000196").includes("[redacted]"), "a labelled routing number is redacted");
-	ok(redactSecrets("Account Number: 237019269430").includes("[redacted]"), "a long labelled account number is redacted");
+	eq(redactSecrets("Product Key: MXNY6-T84BP-FP26W-QYWM6-8TYP6"), "Product Key: [redacted key]", "a license key is redacted");
+	ok(redactSecrets("Routing Number: 053000196").includes("[redacted]"), "a labeled routing number is redacted");
+	ok(redactSecrets("Account Number: 237019269430").includes("[redacted]"), "a long labeled account number is redacted");
 	eq(redactSecrets("Visa 4111111111111111"), "Visa **1111", "a card-length digit run keeps only its last four");
 	// the values that must survive: these are wanted in frontmatter
 	eq(redactSecrets("Order # 111-8099753-6573041"), "Order # 111-8099753-6573041", "an Amazon order number is left intact");
@@ -3672,7 +3672,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 	}
 	{
 		const secret = buildItemNote(hd, { ...hd.items[0], name: "Windows 11 Pro MXNY6-T84BP-FP26W-QYWM6-8TYP6" }, 0, 0, opts);
-		ok(!secret.includes("MXNY6"), "a licence key in a product name never reaches the note");
+		ok(!secret.includes("MXNY6"), "a license key in a product name never reaches the note");
 	}
 	// THE ONE THAT MATTERS: a secret in a FILENAME cannot be fixed by editing the
 	// note, and it leaks again through every wikilink that targets it. Redaction
@@ -3680,7 +3680,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 	{
 		const keyed = { ...hd.items[0], name: "Windows 11 Pro (Download) Product Key: MXNY6-T84BP-FP26W-QYWM6-8TYP6" };
 		const name = txnItemName(hd, keyed, 0);
-		ok(!name.includes("MXNY6"), "a licence key never reaches the item's filename");
+		ok(!name.includes("MXNY6"), "a license key never reaches the item's filename");
 		// the marker may be clipped by the 48-char budget; what matters is that
 		// something visibly stands in for the secret and the secret is gone
 		ok(name.includes("redacted"), "the filename records that something was redacted");
@@ -4104,7 +4104,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 	// Both sides of the comparison have to be reading the same clock. A message's
 	// day is whatever its timestamp says in UTC, because that is what Graph put on
-	// it and all isoDate does is slice the string — so the `today` main.ts hands
+	// it and all isoDate does is slice the string, so the `today` main.ts hands
 	// planWindowUpdate is UTC too, the one date in the plugin that is not local.
 	eq(isoDate("2026-08-02T02:16:33Z"), "2026-08-02", "a message sent at 9:16 PM Central belongs to the next UTC day");
 	ok(!inWindow("2026-07-26T02:00:00Z", "2026-08-02", 6), "the horizon is measured in those same UTC days");
@@ -4459,7 +4459,7 @@ if (fails) {
 	ok(stub.includes("## Follow-ups\n- [ ] "), "and it reaches the note");
 	ok(stub.indexOf("## Notes") < stub.indexOf("## Follow-ups") && stub.indexOf("## Follow-ups") < stub.indexOf("## Agenda"), "notes, then follow-ups, then the agenda");
 	ok(!LEGACY_MEETING_TEMPLATES.includes(DEFAULT_MEETING_TEMPLATE), "the current default is not listed as one to replace");
-	ok(LEGACY_MEETING_TEMPLATES.includes("## Notes\n- \n\n## Agenda\n{{agenda}}"), "the template 1.85.0 shipped is recognised as untouched");
+	ok(LEGACY_MEETING_TEMPLATES.includes("## Notes\n- \n\n## Agenda\n{{agenda}}"), "the template 1.85.0 shipped is recognized as untouched");
 }
 
 {

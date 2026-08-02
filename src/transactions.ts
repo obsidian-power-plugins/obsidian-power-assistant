@@ -415,7 +415,7 @@ export function allocateExtras(o: TxnOrder): number[] {
 /* ---------------- redaction ---------------- */
 
 /** Secrets that ride along in order mail and invoices and must never reach a
- *  note. These files sync, so a licence key or a bank routing number written
+ *  note. These files sync, so a license key or a bank routing number written
  *  into frontmatter leaves the machine.
  *
  *  Deliberately narrow. Order numbers are digits and dashes too (Amazon's
@@ -424,7 +424,7 @@ export function allocateExtras(o: TxnOrder): number[] {
 export function redactSecrets(s: string): string {
 	return (
 		s
-			// software licence keys: five groups of five, as Microsoft prints them
+			// software license keys: five groups of five, as Microsoft prints them
 			.replace(/\b[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}\b/g, "[redacted key]")
 			// bank details, only when the label says so
 			.replace(/\b(routing|swift|iban)\b([^\n]{0,20}?)\b[A-Z0-9]{8,17}\b/gi, "$1$2[redacted]")
@@ -779,7 +779,7 @@ export function parseEmailFile(raw: string): ParsedEmail {
 
 /** ISO-8601 week key, "2026-W29". Weeks belong to the year containing their
  *  Thursday, which is why late-December and early-January spending can land in
- *  a week labelled with the neighbouring year; that is correct, not a bug. */
+ *  a week labeled with the neighbouring year; that is correct, not a bug. */
 export function isoWeekKey(iso: string): string {
 	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
 	if (!m) return "";
@@ -871,7 +871,7 @@ export function buildSpendRollup(items: readonly SpendItem[], today: string, sco
 	if (flagged.length)
 		parts.push(
 			`## Needs review\n\nThese did not match their order's printed totals, so they are not counted reliably above.\n\n` +
-				flagged.slice(0, 30).map((i) => `- [[${i.path}\\|${i.vendor} ${i.date}]] — ${fmtMoney(i.effective)}`).join("\n")
+				flagged.slice(0, 30).map((i) => `- [[${i.path}\\|${i.vendor} ${i.date}]], ${fmtMoney(i.effective)}`).join("\n")
 		);
 	return parts.join("\n\n") + "\n";
 }
@@ -946,7 +946,7 @@ export function buildTxnBase(powerBases: boolean): string {
 
 /* ---------------- CSV backfill ---------------- */
 
-/** Split CSV text into rows of fields, honouring quoted fields that contain
+/** Split CSV text into rows of fields, honoring quoted fields that contain
  *  commas, newlines, and doubled quotes. Amazon's export has product names with
  *  commas in almost every row, so a naive split destroys the file. */
 export function parseCsv(text: string): string[][] {

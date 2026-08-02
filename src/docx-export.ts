@@ -64,7 +64,7 @@ function taskCell(text: string, width: number, header: boolean): TableCell {
 		shading: { type: ShadingType.CLEAR, color: "auto", fill: header ? NAVY : WHITE },
 		verticalAlign: VerticalAlign.CENTER,
 		margins: { top: header ? 100 : 90, bottom: header ? 100 : 90, left: 140, right: 140 },
-		children: [new Paragraph({ children: [run(text || (header ? "" : "—"), header ? { bold: true, size: 20, color: WHITE } : { size: 22 })] })],
+		children: [new Paragraph({ children: [run(text || (header ? "" : "-"), header ? { bold: true, size: 20, color: WHITE } : { size: 22 })] })],
 	});
 }
 
@@ -121,7 +121,7 @@ function sectionBlocks(s: ExportSection, images: Map<string, ResolvedImage>): (P
 	if (s.kind === "tasks" && s.tasks.length) {
 		out.push(actionTable(s.tasks));
 	} else {
-		// lead-in prose first, then bullets — nothing is dropped
+		// lead-in prose first, then bullets, nothing is dropped
 		out.push(...s.paragraphs.map(bodyPara));
 		out.push(...s.bullets.map(bullet));
 	}

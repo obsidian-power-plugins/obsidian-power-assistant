@@ -45,7 +45,7 @@ import { StateEffect, StateField } from "@codemirror/state";
 import type { Range } from "@codemirror/state";
 
 /** Dispatched to force the transcript Live Preview layer to recompute after a
- *  speaker's color or emoji changes — neither touches the doc or selection, so
+ *  speaker's color or emoji changes, neither touches the doc or selection, so
  *  the view plugin would otherwise not know to restyle. */
 const refreshTranscriptEffect = StateEffect.define<null>();
 
@@ -83,7 +83,7 @@ interface YoutubeSession {
 
 /** A television's user agent. YouTube serves a device that says this its TV
  *  interface, whose sign-in is a pairing code approved in a real browser rather
- *  than a password form — the flow Google offers a device it will not accept a
+ *  than a password form, the flow Google offers a device it will not accept a
  *  password from, which is exactly what a window inside Obsidian is. */
 const TV_USER_AGENT =
 	"Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.10.1032722-gold (unlike Gecko) v8/8.8.278.8-jit gles Starboard/16, TV_ATV_2019/2019 (Sony, BRAVIA, Wired)";
@@ -1023,7 +1023,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	private embedding = false;
 	/** Cross-plugin API: Power Explorer's search modal drives its Ask mode
 	 *  through this, and Power Calendar's event cards open meeting notes.
-	 *  Stable shape — add to it, don't change it. */
+	 *  Stable shape, add to it, don't change it. */
 	api = {
 		ask: (question: string): Promise<{ answer: string; hits: number }> => this.askVault(question),
 		/** Open the New meeting dialog prefilled. Missing fields stay blank,
@@ -1788,7 +1788,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	async toggleRecording() {
 		// Stop any active session. recStream is the sentinel: non-null from start
 		// until the final cleanup finishes, so `recorder || recStream` catches every
-		// state — live, paused, mid-rotation, or a recorder that died on its own.
+		// state, live, paused, mid-rotation, or a recorder that died on its own.
 		if (this.recorder || this.recStream) {
 			// breadcrumb for the console: exactly what state this stop click saw
 			console.warn(
@@ -1890,11 +1890,11 @@ export default class PowerAssistantPlugin extends Plugin {
 					// sidebar leaf was opening: never attach to a stale session
 					if (this.recStamp !== session || !this.recStream || !view) return;
 					view.reset();
-					view.setStatus("Recording — live transcript on");
+					view.setStatus("Recording, live transcript on");
 					this.live = new LiveSession(this, stream, view);
 					this.live.start().catch((e) => {
 						console.warn("Power Assistant: live transcript unavailable.", e);
-						view.setStatus("Recording — live transcript unavailable.");
+						view.setStatus("Recording, live transcript unavailable.");
 					});
 				});
 			}
@@ -1936,8 +1936,8 @@ export default class PowerAssistantPlugin extends Plugin {
 			this.rotating = false;
 			void this.finishPart(rotate);
 		};
-		// a recorder can die on its own — a codec hiccup, or the system-audio
-		// loopback track ending — and that fires onerror, NOT onstop. Without this
+		// a recorder can die on its own, a codec hiccup, or the system-audio
+		// loopback track ending, and that fires onerror, NOT onstop. Without this
 		// the session would wedge: a dead recorder, a bar still ticking, and Stop
 		// stuck on "stopping…". Route the error into the same teardown (save what we
 		// have) so the session always ends and the audio is never silently lost.
@@ -2053,7 +2053,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	private teardownSession() {
 		// every step is individually shielded: ONE throwing step (a deferred
 		// sidebar view, a dead AudioContext, anything) must never block the
-		// steps after it — that failure mode held stops hostage once already
+		// steps after it, that failure mode held stops hostage once already
 		const safe = (what: string, fn: () => void) => {
 			try {
 				fn();
@@ -2185,7 +2185,7 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	/** The "file to Meetings" answer: create a meeting note (title optional) and
 	 *  re-dispatch the same parts at it, which routes through the exact flow a
-	 *  recording started FROM a meeting note takes — meeting provider, progress
+	 *  recording started FROM a meeting note takes, meeting provider, progress
 	 *  shown in the note, queueing on a record-only device. */
 	private async fileQuickAsMeeting(parts: { path: string; offsetMs: number }[], title: string, from?: number) {
 		try {
@@ -2419,7 +2419,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			if (!inWatch(af) || /\.part\d+\.\w+$/.test(af.name) || claimed.has(af.path)) continue;
 			// A sync client's "keep both" copy is the same recording under a second
 			// name. Sweeping it transcribes and extracts the meeting a second time
-			// and leaves a duplicate note to reconcile by hand — which is exactly
+			// and leaves a duplicate note to reconcile by hand, which is exactly
 			// what happened here. The queued-meeting path already dedupes conflict
 			// copies (see dedupeQueuedNotes); the orphan sweep never did.
 			if (isSyncConflictName(af.name)) {
@@ -2710,7 +2710,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** The meeting template: a note in the vault when one is named, else the
 	 *  settings box.
 	 *
-	 *  A file wins because it is the better place to write one — the editor, with
+	 *  A file wins because it is the better place to write one, the editor, with
 	 *  live preview, in a vault that syncs it to every device. It falls back
 	 *  rather than failing when the note has been moved or renamed: a template is
 	 *  a convenience, and losing track of it should cost the layout, not the
@@ -2934,7 +2934,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const interval = Math.max(3, dc.interval) * 1000;
 		while (Date.now() < deadline && modal.waiting) {
 			await sleep(interval);
-			if (!modal.waiting) return; // user cancelled
+			if (!modal.waiting) return; // user canceled
 			let res: Awaited<ReturnType<typeof pollToken>>;
 			try {
 				res = await pollToken(s.graphClientId.trim(), s.graphTenant.trim(), dc.device_code);
@@ -3281,7 +3281,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Audio-retention policy: trash the captured audio after a note is written.
 	 *  Only ever runs for auto-processed captures (recorded or dropped into the
 	 *  capture folder), NEVER for a file the user hand-picked to process, and
-	 *  always to the recoverable system trash — retention must not surprise-
+	 *  always to the recoverable system trash, retention must not surprise-
 	 *  delete a keeper. */
 	private async applyRetention(files: TFile[]) {
 		if (this.settings.audioRetention !== "trash") return;
@@ -3477,7 +3477,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			let names: Record<string, string> = {};
 			if (named.length) {
 				// an imported/diarized transcript that already carries real names,
-				// at ANY speaker count — no dialog; the rename command covers fixes
+				// at ANY speaker count: no dialog; the rename command covers fixes
 				attendees = named;
 			} else if (countSpeakers(utts) >= 2 && ((s.nameSpeakers && this.llmReady()) || Object.keys(opts.voiceGuesses ?? {}).length)) {
 				const letters = shares.map((sh) => sh.speaker); // busiest speakers first
@@ -3578,7 +3578,7 @@ export default class PowerAssistantPlugin extends Plugin {
 					)
 				);
 			} catch (e) {
-				// transcription already succeeded — never throw the transcript away
+				// transcription already succeeded, never throw the transcript away
 				extractionError = humanizeError(e instanceof Error ? e.message : String(e));
 				console.error("Power Assistant: extraction failed; saving the transcript.", e);
 				new Notice("Power Assistant: extraction failed; saved the transcript. Run Re-extract to retry. " + extractionError, 12000);
@@ -3876,7 +3876,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		}
 	}
 
-	/** Attendees across every capture note, most frequent first — the
+	/** Attendees across every capture note, most frequent first, the
 	 *  type-ahead behind the naming dialog. */
 	knownAttendees(): string[] {
 		const count = new Map<string, number>();
@@ -4130,7 +4130,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  them rebuilds person pages from whatever fraction of the change has
 	 *  arrived. The device that made the change rebuilds and publishes; the
 	 *  others take the result. Absent or older Power Connect reads as idle,
-	 *  which is the pre-existing behaviour. */
+	 *  which is the pre-existing behavior. */
 	private syncInFlight(): boolean {
 		const pc = (this.app as unknown as { plugins?: { plugins?: Record<string, { running?: unknown }> } }).plugins?.plugins?.["powerconnect"];
 		return pc?.running === true;
@@ -4209,7 +4209,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	/** The Monday note: this week's meetings, decisions, commitments by owner,
-	 *  and what's going stale — aging in your own Power Tables colors. Returns
+	 *  and what's going stale, aging in your own Power Tables colors. Returns
 	 *  whether a digest was actually written (the auto-trigger stamps on that). */
 	async weeklyDigest(open = true): Promise<boolean> {
 		const now = new Date();
@@ -4451,7 +4451,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			if (existing instanceof TFile) await this.app.vault.modifyBinary(existing, data);
 			else await this.app.vault.createBinary(path, data);
 			new Notice(`Power Assistant: exported to ${path}`, 6000);
-			// best-effort open in the system default app (Word), desktop only —
+			// best-effort open in the system default app (Word), desktop only
 			// isolated so a throw/rejection can't produce a false "failed" notice
 			const openExternal = (this.app as unknown as { openWithDefaultApp?: (p: string) => unknown }).openWithDefaultApp;
 			if (typeof openExternal === "function") {
@@ -4735,8 +4735,8 @@ export default class PowerAssistantPlugin extends Plugin {
 			const sinceMs = Date.now() - days * 86400000;
 			const incoming = await feed(sinceMs);
 			// UTC, unlike every other day in this file, and deliberately. The window
-			// places each message by `isoDate(m.date)` — the date Graph stamped on
-			// it, which is UTC — so the horizon has to be measured in the same days.
+			// places each message by `isoDate(m.date)`, the date Graph stamped on
+			// it, which is UTC, so the horizon has to be measured in the same days.
 			// Read off the local clock, the two sides fall a day apart every evening
 			// west of Greenwich and a day of mail sits past the horizon.
 			const today = new Date().toISOString().slice(0, 10);
@@ -5160,7 +5160,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		this.baseCreatedNotice("Meetings.base");
 	}
 
-	/** Milliseconds of ACTUAL recording since it started (0 when idle) — paused
+	/** Milliseconds of ACTUAL recording since it started (0 when idle), paused
 	 *  spans are excluded so stamps map to positions in the gapless audio. */
 	recElapsedMs(): number {
 		if (!this.recStart || !this.recStream) return 0;
@@ -5372,10 +5372,10 @@ export default class PowerAssistantPlugin extends Plugin {
 		// a scan of an hour of video runs for about a minute, which is long enough
 		// that starting one by accident must be undoable: the thing telling you it
 		// is running is the thing that stops it, the same gesture as the queue count
-		let cancelled = false;
+		let canceled = false;
 		progress.noticeEl.style.cursor = "pointer";
 		progress.noticeEl.addEventListener("click", () => {
-			cancelled = true;
+			canceled = true;
 			progress.setMessage("Power Assistant: stopping the scan…");
 		});
 		// reading each frame needs a model; twelve calls that each fail for the
@@ -5386,11 +5386,11 @@ export default class PowerAssistantPlugin extends Plugin {
 		try {
 			const samples = await scanScenes(el, opts.everyMs, opts.threshold, (at, of, hits) => {
 				progress.setMessage(`Power Assistant: scanning the recording, ${fmtTime(at)} of ${fmtTime(of)} (${hits} screen${hits === 1 ? "" : "s"} so far). Click to stop.`);
-				return !cancelled;
+				return !canceled;
 			});
 			// a stop is a stop: the frames are not written, and the caller says so
 			// rather than reporting the empty result as "nothing changed"
-			if (cancelled) return { frames: [], stopped: true };
+			if (canceled) return { frames: [], stopped: true };
 			const scenes = pickSceneFrames(samples, opts.threshold, opts.max);
 			// a mark is someone saying "this bit matters", which beats any pixel
 			// measurement, so marks join the list whatever the scan thought
@@ -5421,7 +5421,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 			return { frames, stopped: false };
 		} finally {
-			cancelled = true;
+			canceled = true;
 			closeVideo(el);
 			progress.hide();
 		}
@@ -5516,7 +5516,7 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	/** Show the sticky transcript player for the active capture note, and tear it
 	 *  down when you move to another note. Driven by the note's audio file, so it
-	 *  is ready immediately — no need to scroll the embed into view. */
+	 *  is ready immediately: no need to scroll the embed into view. */
 	refreshPlayer() {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 		const fm = view?.file ? this.app.metadataCache.getFileCache(view.file)?.frontmatter : undefined;
@@ -5551,7 +5551,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	/** Open the speaker menu from a click on a Live Preview avatar, resolving the
-	 *  file and scope from the active editor — plus which LINE was clicked, so
+	 *  file and scope from the active editor, plus which LINE was clicked, so
 	 *  the menu can act on that one turn. */
 	openSpeakerMenuFromEditor(name: string, evt: MouseEvent) {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -5784,7 +5784,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	/** One lettered voice becomes one person, straight from a click on the
-	 *  transcript label — Otter's tag gesture. */
+	 *  transcript label, Otter's tag gesture. */
 	async assignSpeakerLabel(file: TFile, label: string, to: string) {
 		await this.applySpeakerMapping(file, { [label]: to });
 		const g = this.speakerGuesses[file.path];
@@ -5818,7 +5818,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		this.refreshTranscriptStyling();
 	}
 
-	/** Per-meeting chat: the whole note fits in context, so no retrieval —
+	/** Per-meeting chat: the whole note fits in context, so no retrieval
 	 *  just the note, the question, and real follow-ups. */
 	async openMeetingAsk(file: TFile) {
 		if (!this.llmReady()) {
@@ -6068,7 +6068,7 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	/* ---------------- transcript import ---------------- */
 
-	/** Otter/Teams/Zoom transcript in, first-class capture note out — the same
+	/** Otter/Teams/Zoom transcript in, first-class capture note out, the same
 	 *  post-pipeline as audio (naming, tasks, series, keywords), no
 	 *  transcription key needed. Pre-named labels skip the naming dialog. */
 	async importTranscript(filename: string, content: string, dateHint?: string) {
@@ -6151,7 +6151,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	/** Re-run extraction on an existing capture note (new template, model, or
-	 *  prompt era) from its own captured text — no re-transcription. */
+	 *  prompt era) from its own captured text: no re-transcription. */
 	async reExtract(file: TFile, chosen: Record<ExtractionKey, boolean>) {
 		if (!this.llmReady()) {
 			new Notice("Power Assistant: " + this.llmMissingMsg());
@@ -6248,7 +6248,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		try {
 			for (const [i, f] of files.entries()) {
 				if (this.bulkStop) break;
-				progress.setMessage(`Power Assistant: re-extracting ${i + 1} of ${files.length} — ${f.basename}`);
+				progress.setMessage(`Power Assistant: re-extracting ${i + 1} of ${files.length}, ${f.basename}`);
 				try {
 					const r = await this.reExtractOnce(f, opts.chosen ?? this.reExtractSeed(f));
 					if (r === "ok") done++;
@@ -6283,7 +6283,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			mime,
 			data
 		);
-		// a single request: safe to retry — a failed call transcribed nothing
+		// a single request: safe to retry, a failed call transcribed nothing
 		const res = await withRetry(() =>
 			requestUrl({
 				url: s.transcriptionEndpoint.replace(/\/+$/, "") + "/audio/transcriptions",
@@ -6334,7 +6334,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	/** A self-hosted WhisperX server (tools/whisperx-server): submit the audio,
-	 *  get a job id, poll until it settles — like the AssemblyAI flow, so a
+	 *  get a job id, poll until it settles, like the AssemblyAI flow, so a
 	 *  dropped socket or a plugin reload mid-job never loses minutes of server
 	 *  work. Speaker labels without a cloud provider, and no audio leaves your
 	 *  network. A v1 server that answers with segments directly is still read. */
@@ -6507,7 +6507,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			// repair a stale local address as well as filling an empty one: the
 			// whole point of detection is to fix the endpoint, and an old host
 			// (a VPN address, a machine that moved) is exactly what goes wrong.
-			// A deliberate hosted provider is left alone — only Ollama-shaped
+			// A deliberate hosted provider is left alone, only Ollama-shaped
 			// addresses on its own port are rewritten.
 			const current = this.settings.embeddingsEndpoint.trim();
 			if (!current || /:11434(\/|$)/.test(current)) this.settings.embeddingsEndpoint = `http://${host}:11434/v1`;
@@ -6614,7 +6614,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  diarize_model=v2 selects Deepgram's next-gen diarizer (batch-only, which
 	 *  this endpoint is); the legacy diarize=true routed to the old v1 model,
 	 *  which is what kept gluing two people into one speaker. The two params are
-	 *  mutually exclusive — sending both is rejected. */
+	 *  mutually exclusive, sending both is rejected. */
 	private async transcribeDeepgram(file: TFile): Promise<{ text: string; utts: Utterance[] | null }> {
 		const key = this.settings.deepgramKey;
 		const model = this.settings.deepgramModel.trim() || "nova-2";
@@ -6847,7 +6847,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				return;
 			}
 			new Notice("Power Assistant: fetching the transcript…");
-			// Primary: the InnerTube player API as the Android client — its caption
+			// Primary: the InnerTube player API as the Android client, its caption
 			// URLs work outside a browser session, where the watch-page ones return
 			// empty bodies (YouTube's proof-of-origin enforcement).
 			let title = "YouTube video";
@@ -6910,7 +6910,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				if (got) {
 					if (got.info?.title) title = got.info.title;
 					// the page reader gets almost nothing through a bot wall, so the
-					// note's channel, views, date and length come from here too —
+					// note's channel, views, date and length come from here too
 					// otherwise a capture that got through still reads half-empty
 					info = mergeYoutubeInfo(info, got.info);
 					viaYtDlp = got.text;
@@ -7154,8 +7154,8 @@ export default class PowerAssistantPlugin extends Plugin {
 			);
 			return false;
 		}
-		// Google will not accept a password typed into an embedded browser —
-		// "this browser or app may not be secure" — and that check is there for
+		// Google will not accept a password typed into an embedded browser
+		// "this browser or app may not be secure", and that check is there for
 		// a good reason, so this does not try to look like something it is not.
 		// It uses the flow Google built for exactly this case instead: YouTube's
 		// TV interface, which shows a pairing code you approve in the browser
@@ -7163,7 +7163,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const win = new remote.BrowserWindow({
 			width: 1280,
 			height: 760,
-			title: "Sign in to YouTube — Power Assistant",
+			title: "Sign in to YouTube, Power Assistant",
 			autoHideMenuBar: true,
 			// the same partition the cookies are later read from, and no Node in
 			// it: this window loads a real website, and it gets no more power
@@ -7209,7 +7209,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		try {
 			// the whole jar, filtered here. Asking the session for a domain means
 			// matching on its terms, and a filter that quietly matches nothing
-			// reads exactly like not being signed in — which is how a session
+			// reads exactly like not being signed in, which is how a session
 			// paired from the television looked absent when it was right there.
 			const all = (await ses.cookies.get({})) as SessionCookie[];
 			const mine = all.filter((c) => isYoutubeCookieDomain(c.domain));
@@ -7279,8 +7279,8 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Can this device read YouTube right now, with whatever cookies are set?
 	 *
 	 *  Worth its own button because the answer has nothing to do with being
-	 *  signed in to YouTube in a browser — a capture goes out from Obsidian and
-	 *  yt-dlp, neither of which shares the browser's cookie jar — and because
+	 *  signed in to YouTube in a browser, a capture goes out from Obsidian and
+	 *  yt-dlp, neither of which shares the browser's cookie jar, and because
 	 *  the wall comes and goes, so "try again later" needs something cheap to
 	 *  try with. Asks for one public video's title and downloads nothing. */
 	async youtubeReach(): Promise<string> {
@@ -7519,8 +7519,8 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  A capture is a snapshot, and its counts age: the note says what the post
 	 *  had been seen by the day it was filed. This asks the source once more and
 	 *  updates only views, likes and replies. Nothing else in the note is
-	 *  touched — not the title, not the post's words, not the notes extracted
-	 *  from them — because nothing else about a post that has already been posted
+	 *  touched: not the title, not the post's words, not the notes extracted
+	 *  from them, because nothing else about a post that has already been posted
 	 *  can have changed.
 	 *
 	 *  yt-dlp goes first: it is the only one of the two that knows the view
@@ -7899,7 +7899,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				this.indexChunks[path] = f.chunks;
 			}
 		} catch {
-			/* first run — no index yet */
+			/* first run: no index yet */
 		}
 	}
 
@@ -9078,7 +9078,7 @@ interface SpeakerNameOptions {
 	suggestions?: string[];
 	/** Labels are full display labels ("Rachel"), not letters to prefix. */
 	rawLabels?: boolean;
-	/** Listenable clips per label, and the player to run them — hearing the
+	/** Listenable clips per label, and the player to run them, hearing the
 	 *  voice beats guessing it from the first words. Each click on a row's play
 	 *  button moves to that speaker's next clip. */
 	samples?: Record<string, { startMs: number; durMs: number }[]>;
@@ -9180,7 +9180,7 @@ class SpeakerNamesModal extends Modal {
 	}
 }
 
-/** Move ONE transcript turn to a different speaker — the fix when the diarizer
+/** Move ONE transcript turn to a different speaker, the fix when the diarizer
  *  glued two voices under one label, where renaming the label would just paint
  *  the wrong name onto both people. Existing speakers are one click; anyone
  *  else types ahead from known attendees. */
@@ -9628,7 +9628,7 @@ const STAMP_RE = /\[(\d+:\d{2}(?::\d{2})?)\]/g;
 /** In Live Preview a plain click inside a rendered callout drops the editor
  *  cursor into it, which un-renders the whole block to raw `> …` source. Our
  *  transcript widgets (stamp links, speaker names, avatars, the toggle) exist
- *  to be clicked, so suppress that cursor placement on mousedown — the click
+ *  to be clicked, so suppress that cursor placement on mousedown, the click
  *  itself still fires, and in Reading view this is a harmless no-op. */
 function keepRendered(el: HTMLElement) {
 	el.addEventListener("mousedown", (e) => e.preventDefault());
@@ -9783,7 +9783,7 @@ const SCAN_H = 90;
 /** A greyscale fingerprint of the frame currently displayed.
  *
  *  Luma alone is the right measure here: a shared screen changes by REDRAWING,
- *  and a redraw moves brightness everywhere. Comparing colour as well would cost
+ *  and a redraw moves brightness everywhere. Comparing color as well would cost
  *  three times the arithmetic to answer the same question. */
 function lumaOf(el: HTMLVideoElement, ctx: CanvasRenderingContext2D): Uint8ClampedArray {
 	ctx.drawImage(el, 0, 0, SCAN_W, SCAN_H);
@@ -9810,7 +9810,7 @@ function lumaDiff(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
  *  change, since a recording's opening screen is a screen.
  *
  *  Sampling is what costs the time (one seek and one small draw per interval),
- *  so the caller gets progress per sample and can be cancelled between them. */
+ *  so the caller gets progress per sample and can be canceled between them. */
 async function scanScenes(
 	el: HTMLVideoElement,
 	everyMs: number,
@@ -9878,7 +9878,7 @@ async function pngForDocx(url: string): Promise<ResolvedImage> {
 /** MediaRecorder .webm files usually ship without a duration in their header,
  *  so the audio player shows no total time (just a 0:00 that never fills in).
  *  Force the browser to resolve the real duration by seeking to the end once,
- *  then rewind — after which the native control shows the total length. */
+ *  then rewind, after which the native control shows the total length. */
 function fixAudioDuration(el: HTMLMediaElement) {
 	if (el.dataset.paDurfix) return;
 	el.dataset.paDurfix = "1";
@@ -9910,7 +9910,7 @@ function fixAudioDurations(root: HTMLElement) {
 	for (const el of Array.from(root.querySelectorAll<HTMLMediaElement>("audio, video"))) fixAudioDuration(el);
 }
 
-/** Plays short clips out of a recording's part files — the "let me hear this
+/** Plays short clips out of a recording's part files, the "let me hear this
  *  speaker" button in the naming dialog. Owns one hidden <audio>; a new play()
  *  supersedes the clip before it, and whoever asked is always told when their
  *  clip stops (ended, superseded, or torn down), so buttons never stick on
@@ -10028,7 +10028,7 @@ class SegmentPlayer {
 }
 
 /** The avatar badge drawn before a speaker in the Live Preview transcript.
- *  Clicking it opens the speaker menu (rename, color, emoji) — the way to reach
+ *  Clicking it opens the speaker menu (rename, color, emoji), the way to reach
  *  those actions now that the transcript is plain lines, not a clickable card.
  *  A null onClick renders an inert badge: crosstalk turns have no ONE speaker
  *  for a menu to act on, so their badge just states the voice count. */
@@ -10084,7 +10084,7 @@ class TranscriptBreakWidget extends WidgetType {
  *  and timestamp, right where you edit. Legacy notes whose transcript is still
  *  wrapped in a `> [!transcript]` callout are handled too (the `> ` markers and
  *  callout syntax are hidden), until they are migrated to plain lines. In Source
- *  mode this does nothing — the real Markdown shows. */
+ *  mode this does nothing, the real Markdown shows. */
 function transcriptLivePreview(plugin: PowerAssistantPlugin) {
 	// decorate one line of the transcript section: a speaker turn, a legacy
 	// callout header, or a legacy `> ` quote line
@@ -10177,7 +10177,7 @@ function transcriptLivePreview(plugin: PowerAssistantPlugin) {
 		},
 		{ decorations: (v) => v.decorations }
 	);
-	// click a speaker name to open its menu, or a timestamp to seek the audio —
+	// click a speaker name to open its menu, or a timestamp to seek the audio
 	// mousedown is suppressed first so the click does not just move the cursor
 	const clicks = EditorView.domEventHandlers({
 		mousedown: (e: MouseEvent, cmView: EditorView) => {
@@ -10222,7 +10222,7 @@ let lastBottomBarHeight = 0;
 
 /** An Otter-style sticky player for a capture note's audio: transport controls,
  *  a scrubbable progress bar with a hover time tooltip, playback speed, and a
- *  live link to the transcript — the turn playing now is highlighted and, while
+ *  live link to the transcript, the turn playing now is highlighted and, while
  *  playing, scrolled into view. It drives the note's own <audio> embed. */
 class TranscriptPlayer {
 	readonly bar: HTMLElement;
@@ -10245,7 +10245,7 @@ class TranscriptPlayer {
 	constructor(private plugin: PowerAssistantPlugin, readonly view: MarkdownView, readonly file: TFile) {
 		// drive the audio file directly rather than the note's rendered <audio>
 		// embed, which Obsidian only renders once you scroll to the bottom of a
-		// long transcript — so the player is ready the moment the note opens
+		// long transcript, so the player is ready the moment the note opens
 		this.audio = new Audio(plugin.app.vault.getResourcePath(file));
 		fixAudioDuration(this.audio);
 		this.bar = this.build();
@@ -10271,7 +10271,7 @@ class TranscriptPlayer {
 		return this.view === view && this.file === file && this.bar.isConnected;
 	}
 
-	/** Seek to `secs` and play — used by timestamp/word clicks in the transcript. */
+	/** Seek to `secs` and play, used by timestamp/word clicks in the transcript. */
 	seek(secs: number) {
 		if (!Number.isFinite(secs)) return;
 		const fm = this.file ? this.plugin.app.metadataCache.getFileCache(this.view.file ?? this.file)?.frontmatter : undefined;
@@ -10457,7 +10457,7 @@ function decorateStamps(root: HTMLElement, partsMs?: number[]) {
 
 /** The purpose-built transcript block: inside a [!transcript] callout, every
  *  speaker label (named or "Speaker X") gets that speaker's color and, on
- *  click, opens the Correct dialog prefilled with the name — so renaming a
+ *  click, opens the Correct dialog prefilled with the name, so renaming a
  *  speaker is one click and is remembered for future meetings. */
 const TRANSCRIPT_LABEL_RE = /^(.+?) \[\d{1,2}:\d{2}(?::\d{2})?\]:$/;
 /** Turn context for the speaker menu, from one raw transcript line (the Live
@@ -10495,7 +10495,7 @@ function turnFromRendered(strong: HTMLElement, name: string): { stampSecs: numbe
 }
 
 /** Decorate one rendered `**Name [m:ss]:**` label: speaker color, an avatar
- *  before it, and the speaker menu on click — with the clicked TURN identified,
+ *  before it, and the speaker menu on click, with the clicked TURN identified,
  *  so the menu can play or move that one line. */
 function decorateTurnLabel(
 	strong: HTMLElement,
@@ -10580,7 +10580,7 @@ function enhanceTranscriptCallout(
 		}
 		for (const strong of Array.from(callout.querySelectorAll<HTMLElement>("strong"))) decorateTurnLabel(strong, colorFor, emojiFor, onSpeaker, onPlay);
 	}
-	// plain transcripts (no callout wrapper — every capture since the callout
+	// plain transcripts (no callout wrapper, every capture since the callout
 	// retired) get the same treatment in Reading view: a stamped label is a
 	// transcript turn, and body prose never bolds a "Name [m:ss]:" shape
 	for (const strong of Array.from(root.querySelectorAll<HTMLElement>("strong"))) {
@@ -10608,13 +10608,13 @@ function restyleSpeaker(scope: HTMLElement | Document, name: string, color: stri
 }
 
 /** Unnamed "Speaker X" labels in Reading view open the rename dialog on
- *  click — Otter's tag-a-speaker gesture. Named labels stay plain text, and
+ *  click, Otter's tag-a-speaker gesture. Named labels stay plain text, and
  *  the stamp link inside a label keeps its own click (it stops propagation). */
 function decorateSpeakerLabels(root: HTMLElement, onRename: () => void) {
 	for (const strong of Array.from(root.querySelectorAll("strong"))) {
 		if (strong.classList.contains("ptc-speaker") || strong.classList.contains("pa-tr-speaker")) continue;
 		if (strong.closest('.callout[data-callout="transcript"]')) continue;
-		// diarization labels only (A, B, 1A, 2B…) — never body prose like "Speaker notes:"
+		// diarization labels only (A, B, 1A, 2B…), never body prose like "Speaker notes:"
 		if (!/^Speaker \d{0,2}[A-Z]{1,3}( \[\d+:\d{2}(?::\d{2})?\])?:$/.test(strong.textContent ?? "")) continue;
 		strong.classList.add("ptc-speaker");
 		strong.setAttribute("aria-label", "Rename speakers");
@@ -11044,7 +11044,7 @@ class LiveView extends ItemView {
 	 *  even when there is no streaming transcript. `live` = an AssemblyAI stream
 	 *  will fill the transcript below; otherwise say it lands after you stop. */
 	startMonitor(stream: MediaStream, live: boolean) {
-		this.setStatus(live ? "Recording — live transcript on" : "Recording");
+		this.setStatus(live ? "Recording, live transcript on" : "Recording");
 		this.recBarEl.empty();
 		this.recBarEl.addClass("is-recording");
 		this.recBarEl.createDiv({ cls: "pcap-rec-dot" });
@@ -11153,7 +11153,7 @@ class LiveView extends ItemView {
 		} catch (e) {
 			new Notice("Power Assistant: catch-up failed: " + (e instanceof Error ? e.message : String(e)));
 		} finally {
-			this.setStatus("Live — transcribing…");
+			this.setStatus("Live, transcribing…");
 		}
 	}
 
@@ -11288,7 +11288,7 @@ class RecordingBar {
 }
 
 /** The realtime leg: a temp-token websocket to AssemblyAI streaming fed by a
- *  16 kHz PCM tap on the recording stream. Strictly best-effort — any failure
+ *  16 kHz PCM tap on the recording stream. Strictly best-effort: any failure
  *  here leaves the actual recording (and batch transcription) untouched. */
 class LiveSession {
 	private ws: WebSocket | null = null;
@@ -11331,7 +11331,7 @@ class LiveSession {
 		this.ws = ws;
 		ws.binaryType = "arraybuffer";
 		ws.onopen = () => {
-			this.view?.setStatus("Live — transcribing…");
+			this.view?.setStatus("Live, transcribing…");
 			this.tapAudio();
 		};
 		ws.onmessage = (ev) => {
@@ -11964,7 +11964,7 @@ class SpeakerColorModal extends Modal {
 }
 
 /** A curated set of avatar-friendly emoji for the speaker picker, each with a
- *  few search keywords. Not exhaustive — the picker also takes a pasted emoji. */
+ *  few search keywords. Not exhaustive, the picker also takes a pasted emoji. */
 const EMOJI_CHOICES: { e: string; k: string }[] = [
 	{ e: "😀", k: "smile happy grin face" },
 	{ e: "😄", k: "smile happy joy face" },
@@ -13364,7 +13364,7 @@ class AssistantSettingTab extends PluginSettingTab {
 				.then((st) =>
 					help(
 						st,
-						"YouTube increasingly answers a device it does not recognise with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does not help: a capture goes out from Obsidian and from yt-dlp, and neither can see your browser's cookies. This signs in here instead, and it never asks for your password. Google will not accept one typed into a window inside another app, which is a sensible rule and not one worth dodging, so this uses the flow built for devices in that position: the window opens YouTube's TV interface, you choose Sign in, and it shows a short code. Enter that code at youtube.com/activate in the browser you already trust (the arrow button opens it), approve, and the window is signed in. Then close it. The session is kept in this plugin's own store, separate from the rest of Obsidian, and is never written into your vault or into a note; when a capture needs it, it is handed to yt-dlp as a temporary file deleted the moment the download ends. Sign out clears the whole thing."
+						"YouTube increasingly answers a device it does not recognize with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does not help: a capture goes out from Obsidian and from yt-dlp, and neither can see your browser's cookies. This signs in here instead, and it never asks for your password. Google will not accept one typed into a window inside another app, which is a sensible rule and not one worth dodging, so this uses the flow built for devices in that position: the window opens YouTube's TV interface, you choose Sign in, and it shows a short code. Enter that code at youtube.com/activate in the browser you already trust (the arrow button opens it), approve, and the window is signed in. Then close it. The session is kept in this plugin's own store, separate from the rest of Obsidian, and is never written into your vault or into a note; when a capture needs it, it is handed to yt-dlp as a temporary file deleted the moment the download ends. Sign out clears the whole thing."
 					)
 				);
 			// The label has to agree with the words beside it: a row saying a
@@ -13392,7 +13392,7 @@ class AssistantSettingTab extends PluginSettingTab {
 					try {
 						const title = await this.plugin.youtubeReach();
 						new Notice(
-							title ? `Power Assistant: YouTube answered — “${title}”. Captures work.` : "Power Assistant: YouTube answered, but said nothing. Try again in a minute.",
+							title ? `Power Assistant: YouTube answered, “${title}”. Captures work.` : "Power Assistant: YouTube answered, but said nothing. Try again in a minute.",
 							8000
 						);
 					} catch (e) {
@@ -13400,7 +13400,7 @@ class AssistantSettingTab extends PluginSettingTab {
 						new Notice(
 							/sign in|not a bot|cookies/i.test(m)
 								? "Power Assistant: YouTube still will not talk to this device" +
-										(signedIn ? ", even with the saved session. Tell Steve — the session works in the window but not for a download." : ". Sign in above.")
+										(signedIn ? ", even with the saved session. Tell Steve, the session works in the window but not for a download." : ". Sign in above.")
 								: "Power Assistant: " + m,
 							15000
 						);
@@ -13461,7 +13461,7 @@ class AssistantSettingTab extends PluginSettingTab {
 			.then((st) =>
 				help(
 					st,
-					"YouTube now answers an unrecognised device with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does NOT fix this: a capture goes out from Obsidian and from yt-dlp, and neither shares your browser's cookie jar — as far as YouTube can tell, they are a stranger. What gets through is handing those programs a copy of the cookies. Reading them straight out of Chrome or Edge fails on Windows (both encrypt the store), so export a cookies.txt with a browser extension and point this at the file, then press Test YouTube. Keep the file outside your vault: it holds live sessions for whatever sites it covers, anyone with it is signed in as you, and a vault that syncs would carry it to every device and to your cloud folder. It is read at download time and never copied into a note or into these settings. Export it from a private window you close afterwards, so ordinary browsing does not rotate the session out from under it, and re-export when captures start failing again."
+					"YouTube now answers an unrecognised device with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does NOT fix this: a capture goes out from Obsidian and from yt-dlp, and neither shares your browser's cookie jar, as far as YouTube can tell, they are a stranger. What gets through is handing those programs a copy of the cookies. Reading them straight out of Chrome or Edge fails on Windows (both encrypt the store), so export a cookies.txt with a browser extension and point this at the file, then press Test YouTube. Keep the file outside your vault: it holds live sessions for whatever sites it covers, anyone with it is signed in as you, and a vault that syncs would carry it to every device and to your cloud folder. It is read at download time and never copied into a note or into these settings. Export it from a private window you close afterwards, so ordinary browsing does not rotate the session out from under it, and re-export when captures start failing again."
 				)
 			)
 			.addText((t) => t.setPlaceholder("C:\\Users\\you\\cookies.txt").setValue(s.cookieFile).onChange((v) => ((s.cookieFile = v.trim()), save())));
@@ -13575,7 +13575,7 @@ class AssistantSettingTab extends PluginSettingTab {
 			.then((st) =>
 				help(
 					st,
-					"The better place to keep a template, if you already keep them as notes: you write it in the editor with live preview instead of a settings box, it syncs with the vault, and its history is your vault's history. Name any note here and its body becomes what a new meeting note starts with, tokens and all. Whatever properties the template note carries — an icon, a description, the fields some other template tool wants — are ignored: they describe the template, not the meeting, and the plugin writes the meeting's own properties itself. Tokens this plugin does not know are left exactly as they are, so a template shared with another tool keeps that tool's placeholders intact. If the note is renamed or deleted, a new meeting says so once and falls back to the box below rather than failing."
+					"The better place to keep a template, if you already keep them as notes: you write it in the editor with live preview instead of a settings box, it syncs with the vault, and its history is your vault's history. Name any note here and its body becomes what a new meeting note starts with, tokens and all. Whatever properties the template note carries (an icon, a description, the fields some other template tool wants) are ignored: they describe the template, not the meeting, and the plugin writes the meeting's own properties itself. Tokens this plugin does not know are left exactly as they are, so a template shared with another tool keeps that tool's placeholders intact. If the note is renamed or deleted, a new meeting says so once and falls back to the box below rather than failing."
 				)
 			)
 			.addText((t) => t.setPlaceholder("Templates/Meeting Notes").setValue(s.meetingTemplateFile).onChange((v) => ((s.meetingTemplateFile = v.trim()), save())))
@@ -13598,8 +13598,8 @@ class AssistantSettingTab extends PluginSettingTab {
 				help(
 					st,
 					"The body of a new meeting note, yours to arrange. The properties above it are not part of this: they are structured fields Obsidian edits in place, and one malformed line in a template would break every note's YAML, so the plugin keeps writing those.\n\n" +
-						MEETING_TOKENS.map((t) => `{{${t.token}}} — ${t.what}`).join("\n") +
-						"\n\nA line that carries tokens and gets nothing back is dropped, label and all: put \"**Where:** {{where}}\" in and a meeting with no location leaves no orphan \"Where:\" behind. A line with no tokens is kept exactly as written, so headings and checklists survive untouched. An unknown token counts as empty, which takes its line with it — worth knowing if a line disappears and you expected it. Empty resets to the default."
+						MEETING_TOKENS.map((t) => `{{${t.token}}}, ${t.what}`).join("\n") +
+						"\n\nA line that carries tokens and gets nothing back is dropped, label and all: put \"**Where:** {{where}}\" in and a meeting with no location leaves no orphan \"Where:\" behind. A line with no tokens is kept exactly as written, so headings and checklists survive untouched. An unknown token counts as empty, which takes its line with it, worth knowing if a line disappears and you expected it. Empty resets to the default."
 				)
 			)
 			.then((st) => st.settingEl.addClass("pcap-template-item"))
@@ -14130,7 +14130,7 @@ class AssistantSettingTab extends PluginSettingTab {
 			.then((st) =>
 				help(
 					st,
-					"Reads the file's own modified time, so it is right without you maintaining anything. If a note has an `updated:` (or `modified:`) property in its frontmatter, that wins instead — useful in a synced vault, where the sync client can rewrite the file's modified time when a note arrives from another device and make it look freshly edited."
+					"Reads the file's own modified time, so it is right without you maintaining anything. If a note has an `updated:` (or `modified:`) property in its frontmatter, that wins instead, useful in a synced vault, where the sync client can rewrite the file's modified time when a note arrives from another device and make it look freshly edited."
 				)
 			);
 		new Setting(c)

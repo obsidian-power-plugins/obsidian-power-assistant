@@ -243,7 +243,7 @@
 }
 
 /* Live Preview (Edit mode): the transcript is plain, always-editable speaker
-   lines styled like Otter — the avatar sits in a left gutter, "Name  time" is
+   lines styled like Otter, the avatar sits in a left gutter, "Name  time" is
    the header, and the spoken text drops onto its own line below it */
 /* The selector is prefixed with the source-view ancestor so it out-specifies
    Obsidian core's `.markdown-source-view.mod-cm6 .cm-line { padding: 0 }`, which
@@ -269,7 +269,7 @@
    turns: it renders as a full ~23px empty editor line, which on top of each
    turn's 12px padding roughly doubles the space between speakers. Targeting the
    empty cm-line immediately before a speaker line (never a turn or its body,
-   which carry their own classes) drops the gap to just the padding — about half.
+   which carry their own classes) drops the gap to just the padding, about half.
    The turn's own padding is left alone, so the playing-turn highlight stays roomy. */
 .markdown-source-view.mod-cm6 .cm-line:has(+ .cm-line.pa-lp-tr) {
 	min-height: 0;
@@ -1380,7 +1380,7 @@ button.pcap-recbar-btn {
 
 /* Collapsible settings sections: a tab reads as a short list of topics, and
    opening one is a click on its heading. The heading always stays visible, so
-   nothing is ever hidden without a labelled way back to it. */
+   nothing is ever hidden without a labeled way back to it. */
 .ptc-settings-section .setting-item.ptc-section-head {
 	cursor: pointer;
 }
@@ -1566,7 +1566,7 @@ textarea.pcap-template-area {
    milliseconds. Every [m:ss] link in the transcript needs it to open the right
    part at the right place, and nobody needs to look at it: "[0, 3900876]" in a
    properties panel is noise wearing the clothes of information. Hidden, not
-   removed — the stamps still read it, and it is still there in the file.
+   removed, the stamps still read it, and it is still there in the file.
 
    Scoped to the pa- prefixed key on purpose: the plugin hides what it wrote,
    and has no business hiding a property someone else uses. */

@@ -189,7 +189,7 @@ function callTool(name, args) {
 	if (name === "list_recent_notes") {
 		const limit = Math.max(1, Math.min(50, args?.limit ?? 15));
 		const rows = [...cache.entries()].sort((a, b) => b[1].mtime - a[1].mtime).slice(0, limit);
-		return text(rows.map(([path, d]) => `- ${d.title} — ${path}`).join("\n") || "No notes.");
+		return text(rows.map(([path, d]) => `- ${d.title}, ${path}`).join("\n") || "No notes.");
 	}
 	if (name === "finances_summary") {
 		const byCur = new Map();

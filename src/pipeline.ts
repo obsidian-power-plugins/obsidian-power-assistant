@@ -133,7 +133,7 @@ export const MEETING_TOKENS: { token: string; what: string }[] = [
 /** A template note's body: its own frontmatter stripped, nothing else touched.
  *
  *  A template kept as a note in the vault usually carries properties of its own
- *  — an icon, a description, whatever put it in a template folder — and those
+ *  (an icon, a description, whatever put it in a template folder) and those
  *  describe the template, not the meeting. The plugin writes the meeting's own
  *  properties, so only the body below them is the template. */
 export function templateBodyOf(md: string): string {
@@ -212,7 +212,7 @@ export function buildMeetingStub(opts: {
 	// The title and the when/where lines used to open the note. They said what
 	// the filename and the properties above them already said, so the note began
 	// by repeating itself and the first thing worth reading sat a screen down.
-	// The join details were the exception — nothing else carried them — so they
+	// The join details were the exception (nothing else carried them) so they
 	// moved up into properties rather than going with the rest.
 	//
 	// What fills the body is the user's own template now; the default opens on
@@ -560,7 +560,7 @@ function parseOutlookInvite(text: string): ParsedInvite {
 	const whenLine = body.match(INVITE_LABELS.when)?.[1]?.trim() ?? "";
 	const location = body.match(INVITE_LABELS.location)?.[1]?.trim() ?? "";
 	const date = parseInviteDate(whenLine || body);
-	const timeRange = /\d{1,2}:\d{2}\s*[AP]M\s*(?:[-–—]|to)\s*\d{1,2}:\d{2}\s*[AP]M/i;
+	const timeRange = /\d{1,2}:\d{2}\s*[AP]M\s*(?:[---]|to)\s*\d{1,2}:\d{2}\s*[AP]M/i;
 	const when = (whenLine.match(timeRange)?.[0] ?? body.match(timeRange)?.[0] ?? "").replace(/\s+/g, " ").trim();
 	const attendees: string[] = [];
 	const seen = new Set<string>();
@@ -692,7 +692,7 @@ export function buildExtractionPrompt(
 			? "Action items are a Markdown checklist, one item per line, exactly: '- [ ] Task description [[Owner]] 📅 YYYY-MM-DD'. " +
 				"Include the [[Owner]] wiki-link ONLY when the transcript names who owns the task, and the 📅 due token ONLY when a deadline is actually stated" +
 				(opts.meetingDate ? ` (resolve relative phrases like 'next Friday' against the meeting date ${opts.meetingDate})` : "") +
-				". Bare '- [ ] Task description' is correct when owner and date are unknown — never invent either. "
+				". Bare '- [ ] Task description' is correct when owner and date are unknown, never invent either. "
 			: "Action items are a Markdown table with columns | Task | Owner | Due |; use TBD for an unknown owner or date on a real task. ";
 	// Stamps go on the narrative sections only. Action items are a strict grammar
 	// in both their forms (a Tasks checklist line, or table columns), and a stamp
@@ -713,16 +713,16 @@ export function buildExtractionPrompt(
 		"Produce ONLY the requested sections, in the order given, each as a '## Heading'. " +
 		actionRule +
 		stampRule +
-		"The Keywords section, when requested, is a single line of 8 to 15 comma-separated topics — no bullets, no commentary. " +
+		"The Keywords section, when requested, is a single line of 8 to 15 comma-separated topics: no bullets, no commentary. " +
 		"Ignore sponsor read-outs and advertisement segments; they are not part of the content and must not appear in any section. " +
-		"When a section has no real content in the transcript, write a single italic line such as *None identified.* under its heading — never an empty table or a placeholder-only row. " +
+		"When a section has no real content in the transcript, write a single italic line such as *None identified.* under its heading, never an empty table or a placeholder-only row. " +
 		"Be faithful to the transcript: never invent or calculate facts, names, dates, or numbers that are not stated in it, and flag uncertainty explicitly. " +
 		"No preamble before the first heading.";
 	const user =
 		"Sections to produce:\n" +
-		sections.map((s) => `- ## ${s.label} — ${s.hint}`).join("\n") +
+		sections.map((s) => `- ## ${s.label}, ${s.hint}`).join("\n") +
 		(opts.priorContext
-			? `\n\nContext from the previous meeting in this series (for resolving references and status changes — do NOT re-summarize it):\n"""\n${opts.priorContext}\n"""`
+			? `\n\nContext from the previous meeting in this series (for resolving references and status changes, do NOT re-summarize it):\n"""\n${opts.priorContext}\n"""`
 			: "") +
 		`\n\nTranscript:\n"""\n${transcript}\n"""`;
 	return { system, user };
@@ -763,7 +763,7 @@ function displayLabel(speaker: string): string {
  *  timestamped when segment times are known: **Speaker A [1:02]:** text.
  *  Imported transcripts carry real names, which render bare (**Steve [1:02]:**).
  *  A turn the diarizer heard two voices in at once renders as
- *  **Crosstalk (Steve + Speaker B) [1:02]:** — an honest label beats
+ *  **Crosstalk (Steve + Speaker B) [1:02]:**, an honest label beats
  *  confidently attributing overlapped speech to one name. The stamps are what
  *  audio-jump search anchors on. */
 export function formatUtterances(utts: Utterance[]): string {
@@ -792,7 +792,7 @@ export function countSpeakers(utts: Utterance[]): number {
 
 /** Attendees for a solo voice memo: your name, but ONLY for a genuinely solo,
  *  unlabeled, DIARIZED recording. Undiarized transcripts (Whisper returns no
- *  utterances) can't be proven solo, so they get nothing — a Whisper-captured
+ *  utterances) can't be proven solo, so they get nothing, a Whisper-captured
  *  team meeting must never be mis-tagged as attended alone. */
 export function memoAttendees(utts: Utterance[] | null, yourName: string): string[] {
 	if (!yourName.trim() || !utts?.length) return [];
@@ -817,7 +817,7 @@ export function tagify(s: string): string {
  *  Under "pa-parts" now, beside pa-recordings and pa-eval: the plugin's
  *  machine-only keys wear that prefix, and a bare "parts" both looked like
  *  something a person wrote and could collide with a property someone actually
- *  uses — which matters, because the plugin hides its own key from the
+ *  uses, which matters, because the plugin hides its own key from the
  *  properties panel and has no business hiding anyone else's. Notes written
  *  before the rename still say "parts", and still work.
  *
@@ -833,7 +833,7 @@ export function partOffsetsOf(fm: Record<string, unknown> | null | undefined): n
 
 /** The finished note: frontmatter properties, extracted body, carried-over
  *  items, marked moments, and the raw transcript for traceability. `source` is
- *  the frontmatter value — "[[vault/path.webm]]" for audio, a URL for YouTube. */
+ *  the frontmatter value, "[[vault/path.webm]]" for audio, a URL for YouTube. */
 export function assembleNote(opts: {
 	title: string;
 	date: string;
@@ -901,12 +901,12 @@ export function assembleNote(opts: {
 	const parts = [titled ? `${fm}\n# ${opts.title}` : fm];
 	if (opts.speakersLine) parts.push(`**Speakers:** ${opts.speakersLine}`);
 	const heading = opts.transcriptHeading ?? "Transcript";
-	// a failed extraction ALWAYS keeps the transcript, whatever the setting —
+	// a failed extraction ALWAYS keeps the transcript, whatever the setting
 	// after a good transcription it's the only copy of what was paid for
 	//
 	// the transcript is plain speaker lines under the "## Transcript" heading:
 	// always visible and editable in place, and styled live by the editor.
-	// (No callout wrapper — a callout collapses to raw source when edited.)
+	// (No callout wrapper, a callout collapses to raw source when edited.)
 	const captured =
 		(opts.includeTranscript || opts.extractionError) && opts.transcript.trim()
 			? `## ${heading}\n\n${opts.transcript.trim()}`
@@ -919,7 +919,7 @@ export function assembleNote(opts: {
 	if (opts.body) parts.push(opts.body.trim());
 	else if (opts.extractionError)
 		parts.push(
-			`> [!warning] Extraction failed — the ${heading.toLowerCase()} is saved below.\n> ${opts.extractionError.replace(/\s+/g, " ").trim()}\n> Run **Re-extract this capture** to try again.`
+			`> [!warning] Extraction failed: the ${heading.toLowerCase()} is saved below.\n> ${opts.extractionError.replace(/\s+/g, " ").trim()}\n> Run **Re-extract this capture** to try again.`
 		);
 	else parts.push("*No extraction ran (configure an Anthropic API key in Power Assistant settings).*");
 	if (opts.carryOver) parts.push(`## Carried over\n\n${opts.carryOver}`);
@@ -1297,7 +1297,7 @@ export function isXUrl(url: string): boolean {
  *  every post carrying a photo or video, so a post that is all video arrives as
  *  a bare link: not empty, and not words either. Empty here means there is
  *  nothing to title a note with, nothing to summarize, and nothing to send a
- *  model — which answers a bare URL by saying it cannot summarize a URL.
+ *  model, which answers a bare URL by saying it cannot summarize a URL.
  *
  *  Both spellings of that link have to go. The embed payload carries the real
  *  t.co URL; oEmbed renders the same link with its display text, `pic.x.com/…`,
@@ -1314,7 +1314,7 @@ export function postWords(text: string): string {
  *  model asked to summarize a bare URL replies that it cannot summarize a URL,
  *  politely and at length, and that reply lands in the note under **Summary**
  *  where the summary should be. Nothing to extract from is not a failure worth
- *  reporting either — it just means the captured text is the whole note. */
+ *  reporting either, it just means the captured text is the whole note. */
 export function hasWordsToExtract(text: string): boolean {
 	return /[\p{L}\p{N}]/u.test((text || "").replace(/https?:\/\/\S+/g, " "));
 }
@@ -1411,7 +1411,7 @@ export interface StatUpdate {
 /** The count properties a fresh read would change, and what they were.
  *
  *  Only the three that move. Everything else a capture stores describes the post
- *  as it was written — its author, its date, its words — and re-reading must not
+ *  as it was written (its author, its date, its words) and re-reading must not
  *  disturb any of it. A count the fresh read knows nothing about is left alone
  *  rather than blanked: yt-dlp reports views and X's embed payload does not, so
  *  a refresh that fell back to the embed must not erase a number it merely could
@@ -1508,8 +1508,8 @@ export interface SessionCookie {
 /** Cookies as the Netscape file yt-dlp reads.
  *
  *  The header line is not decoration: yt-dlp refuses a cookie file without it.
- *  Fields are tab-separated — domain, whether subdomains are included, path,
- *  secure, expiry, name, value — and a session cookie (no expiry) is written as
+ *  Fields are tab-separated, domain, whether subdomains are included, path,
+ *  secure, expiry, name, value, and a session cookie (no expiry) is written as
  *  0, which is how the format says "until the browser closes".
  *
  *  Sorted, so a file written twice from the same session compares equal and a
@@ -1597,7 +1597,7 @@ export function ytDlpSubsArgs(url: string, outTemplate: string, cookies: CookieB
  *
  *  Worth its own function because the refusal arrives as a perfectly ordinary
  *  200 with an empty caption list, which the capture used to report as "this
- *  video has no captions to fetch" — a diagnosis that sends you looking at the
+ *  video has no captions to fetch", a diagnosis that sends you looking at the
  *  video instead of at the wall in front of it. */
 export function youtubeBlockReason(status: string, reason = ""): string {
 	const s = (status || "").toUpperCase();
@@ -1636,7 +1636,7 @@ export function appendWithoutOverlap(text: string, next: string, maxWords = 60):
 	return `${text} ${next}`;
 }
 
-/** Whether a caption track was written by YouTube's speech recogniser rather
+/** Whether a caption track was written by YouTube's speech recognizer rather
  *  than by a person. Its giveaway is per-word timing markup inside the cues,
  *  which an uploaded track has no reason to carry. A human track is worth
  *  preferring: same words, real punctuation, no rolling repetition. */
@@ -1729,7 +1729,7 @@ export interface TweetEmbed extends TweetEmbedBase {
 }
 
 /** A post's own words, with the links X appended for its own media removed.
- *  Empty when the post is media and nothing else — see `postWords`. A link the
+ *  Empty when the post is media and nothing else, see `postWords`. A link the
  *  author actually typed is not in `entities.media` and survives. */
 export function tweetOwnText(t: TweetEmbedBase | undefined): string {
 	let s = t?.text ?? "";
@@ -1839,7 +1839,7 @@ export function isoFromLongDate(s: string): string | undefined {
  *
  *  This reply does not name which links X appended for the post's own media, so
  *  a paragraph that is nothing but links reads as wordless whichever kind they
- *  were — which is the right answer either way, since a note cannot be written
+ *  were, which is the right answer either way, since a note cannot be written
  *  about a bare link. */
 export function parseTweetOembed(j: TweetOembed): TweetRead | null {
 	const html = j.html ?? "";
@@ -2246,7 +2246,7 @@ export function buildAskPrompt(
 	hits: { path: string; heading: string; text: string }[]
 ): { system: string; user: string } {
 	const system =
-		"You answer questions about the user's own notes. Use ONLY the provided excerpts — never outside knowledge. " +
+		"You answer questions about the user's own notes. Use ONLY the provided excerpts, never outside knowledge. " +
 		"Cite as you go: after each claim, add a wiki-link to its source like [[path]] (use the path exactly as given, without the .md extension). " +
 		"If the excerpts do not contain the answer, say so plainly and suggest what to search instead. Concise Markdown.";
 	const user =
@@ -2513,7 +2513,7 @@ export function parseSpeakerNames(reply: string, speakers: string[]): Record<str
 	}
 }
 
-/** Rewrite "**Label [1:02]:**" / "**Label:**" speaker labels to new names —
+/** Rewrite "**Label [1:02]:**" / "**Label:**" speaker labels to new names
  *  the general form behind both first-pass naming and retroactive renames.
  *  All renames happen in ONE pass, simultaneously: swapping two people
  *  ({Rachel: "Steve", Steve: "Rachel"}) must never collapse them into one. */
@@ -2563,7 +2563,7 @@ function correctionRe(term: string): RegExp {
 
 /** The character ranges of every whole-word occurrence of `term` in `text`,
  *  so a caller can rewrite them in place (an open editor) instead of the whole
- *  document — which keeps scroll position and callout fold state. */
+ *  document, which keeps scroll position and callout fold state. */
 export function correctionRanges(text: string, term: string): { start: number; end: number }[] {
 	const t = term.trim();
 	if (!t) return [];
@@ -2646,7 +2646,7 @@ export function parseTranscriptSpeakerLine(line: string): TranscriptSpeakerLine 
  *  the transcript is always-visible, always-editable Markdown (no callout card
  *  to swap in and out of in Live Preview). A note with no transcript callout is
  *  returned unchanged. The `## Transcript` heading and the lines themselves are
- *  preserved exactly — only the callout wrapper and its `> ` quoting are removed. */
+ *  preserved exactly, only the callout wrapper and its `> ` quoting are removed. */
 export function stripTranscriptCallout(md: string): string {
 	const lines = md.split("\n");
 	const out: string[] = [];
@@ -2689,8 +2689,8 @@ export function fmtClock(secs: number): string {
 
 /** Estimate the time of a word inside a turn by its position in the turn's
  *  text: the turn spans `start`→`next` seconds, and the word sits `offset` chars
- *  into `length` chars of spoken text. Approximate — we store one stamp per turn,
- *  not per word — but close enough to play from roughly the right place. */
+ *  into `length` chars of spoken text. Approximate, we store one stamp per turn,
+ *  not per word, but close enough to play from roughly the right place. */
 export function interpolatedTime(start: number, next: number, offset: number, length: number): number {
 	if (!(next > start) || length <= 0) return start;
 	const frac = Math.min(1, Math.max(0, offset / length));
@@ -2751,7 +2751,7 @@ export function talkShares(utts: Utterance[]): { speaker: string; share: number;
 		.sort((a, b) => b.share - a.share);
 }
 
-/** "Steve (57%), Rachel (26%), and 9 more under 1%" — null when there's only
+/** "Steve (57%), Rachel (26%), and 9 more under 1%", null when there's only
  *  one voice (a memo needs no share line). */
 export function formatSpeakersLine(
 	shares: { speaker: string; share: number }[],
@@ -2775,7 +2775,7 @@ export interface TurnRef {
 	textHint?: string;
 }
 
-/** The [from, to) line range of the "## Transcript" section, heading excluded —
+/** The [from, to) line range of the "## Transcript" section, heading excluded
  *  the same walk the Live Preview styling does. */
 function transcriptLineRange(lines: string[]): { from: number; to: number } | null {
 	for (let i = 0; i < lines.length; i++) {
@@ -2834,7 +2834,7 @@ export function transcriptToUtterances(md: string): Utterance[] {
 	return out;
 }
 
-/** Rewrite ONE turn's label to a different name — the per-line fix for a
+/** Rewrite ONE turn's label to a different name, the per-line fix for a
  *  diarizer that glued two people under one voice, where renaming the label
  *  everywhere would just paint the wrong name onto both. The turn is matched by
  *  label + stamp, with the first words breaking a same-second tie; only that
@@ -2928,7 +2928,7 @@ export function buildMeetingChat(
 ): { system: string; messages: { role: "user" | "assistant"; content: string }[] } {
 	const system =
 		"You answer questions about ONE meeting, whose full note (extracted sections plus transcript) is provided. " +
-		"Use ONLY the note — say so plainly when it doesn't contain the answer. " +
+		"Use ONLY the note, say so plainly when it doesn't contain the answer. " +
 		"When you reference a moment that carries a [m:ss] stamp in the note, include the stamp so it can be clicked. Concise Markdown.";
 	const messages = turns.map((t, i) =>
 		i === 0 && t.role === "user"
@@ -2947,7 +2947,7 @@ export function extractOpenTasks(md: string): string[] {
 }
 
 /** Carried-over section body: open items referenced back to their meeting.
- *  Deliberately NOT checkboxes — the live task stays in the previous note, so
+ *  Deliberately NOT checkboxes, the live task stays in the previous note, so
  *  todo dashboards never count the same task twice. */
 export function buildCarryOver(tasks: string[], fromPath: string): string | null {
 	if (!tasks.length) return null;
@@ -3048,7 +3048,7 @@ export function frameFileName(noteBase: string, secs: number): string {
  *  the frame doubles as a jump back to that moment), then the embed.
  *
  *  The stamp leading is not cosmetic. A line STARTING with an embed is how the
- *  note's trailing recording players are recognised when a re-extract rewrites
+ *  note's trailing recording players are recognized when a re-extract rewrites
  *  the body, so a frame that led with `![[` would be read as the end of the
  *  extracted sections and everything below it would survive as the tail. */
 export function frameEmbedLine(secs: number, link: string): string {
@@ -3546,7 +3546,7 @@ function normalizeSpeakerLabel(name: string): string {
 }
 
 /** Is this label a diarization placeholder (A, B, 1, 1A, 12B) rather than a
- *  name? Single UPPERCASE letters and digit-prefixed forms only — short real
+ *  name? Single UPPERCASE letters and digit-prefixed forms only, short real
  *  names and initials (Jo, Ed, TJ) must never be swallowed as placeholders. */
 /** True for a correction term that is really a per-recording diarization
  *  label ("Speaker A", "Speaker 1A"). Letters rotate with every recording, so
@@ -3661,7 +3661,7 @@ export function parseTranscriptFile(filename: string, src: string): Utterance[] 
 export const SOURCE_HEADINGS = ["Transcript", "Post", "Article"] as const;
 
 /** Sections that are not the extraction and must outlive a re-extract. The
- *  source text is in here under every heading it can use — one of them leads
+ *  source text is in here under every heading it can use, one of them leads
  *  the note on a post capture, and eating it would destroy the only copy of
  *  what was captured.
  *
@@ -4583,7 +4583,7 @@ export function buildFinancesRollup(docs: FinanceDoc[], today: string): string {
 		parts.push(
 			`## Upcoming & overdue bills\n\n` +
 				"| Due | Vendor | Amount |\n| --- | --- | --- |\n" +
-				bills.map((x) => `| ${x.due < today ? "🔴 " : ""}${x.due} | ${noteLink(x.path, x.vendor || x.title)} | ${x.amount > 0 ? withCur(x.amount, x.currency) : "—"} |`).join("\n")
+				bills.map((x) => `| ${x.due < today ? "🔴 " : ""}${x.due} | ${noteLink(x.path, x.vendor || x.title)} | ${x.amount > 0 ? withCur(x.amount, x.currency) : "-"} |`).join("\n")
 		);
 
 	// by vendor, then by month, keyed per-currency so each total is valid
@@ -4697,7 +4697,7 @@ export function buildMorningBriefing(d: BriefingData, longDateStr: string): stri
 
 	if (d.commitments.length) {
 		const line = (c: BriefingData["commitments"][number]) =>
-			`- ${c.overdue ? "🔴 " : ""}${c.task}${c.owner && c.owner !== "Unassigned" ? ` — [[${c.owner}]]` : ""} · due ${c.due} *(${noteLink(c.fromPath)})*`;
+			`- ${c.overdue ? "🔴 " : ""}${c.task}${c.owner && c.owner !== "Unassigned" ? `, [[${c.owner}]]` : ""} · due ${c.due} *(${noteLink(c.fromPath)})*`;
 		const over = d.commitments.filter((c) => c.overdue);
 		const soon = d.commitments.filter((c) => !c.overdue);
 		const blocks = [`## Commitments`];
@@ -4750,7 +4750,7 @@ export function buildCatchUpPrompt(text: string, minutes: number): { system: str
 export function buildLiveActionsPrompt(text: string): { system: string; user: string } {
 	return {
 		system:
-			"You spot NEW commitments in live meeting speech. Reply with one commitment per line as 'Task — owner if stated'; reply exactly NONE when there are none. Never invent owners.",
+			"You spot NEW commitments in live meeting speech. Reply with one commitment per line as 'Task, owner if stated'; reply exactly NONE when there are none. Never invent owners.",
 		user: `Recent speech:\n"""\n${text}\n"""`,
 	};
 }
@@ -4790,7 +4790,7 @@ export function filterHitsByMeta<T extends { path: string }>(
 }
 
 /** Rough per-model rates (USD per million tokens in/out) plus per-hour audio
- *  rates — order-of-magnitude trust, not accounting; every figure is prefixed ≈.
+ *  rates, order-of-magnitude trust, not accounting; every figure is prefixed ≈.
  *  Keep these current with published pricing: Haiku 4.5 $1/$5, Sonnet $3/$15,
  *  Opus 4.x $5/$25 (NOT the old Opus 3 $15/$75). */
 const TOKEN_RATES: [string, number, number][] = [
@@ -4825,7 +4825,7 @@ export interface LlmSettings {
 /** Where an AI call goes for the configured provider. `baseURL: null` means
  *  Anthropic's own cloud. The custom path is any server speaking the Anthropic
  *  Messages API (Ollama 0.14+, LM Studio, llama.cpp); most ignore the key, so
- *  a placeholder goes out when none is set — the SDK requires one. A custom
+ *  a placeholder goes out when none is set, the SDK requires one. A custom
  *  provider with no endpoint falls back to the cloud rather than erroring,
  *  so a half-finished settings change never strands a capture mid-pipeline. */
 export function resolveLlmTarget(s: LlmSettings): { baseURL: string | null; apiKey: string; model: string } {
@@ -4917,7 +4917,7 @@ export function parseWhisperX(json: WhisperXResponse): {
 		last = id;
 		const speaker = letterFor(id);
 		// a crosstalk voice gets a letter even if it never dominates a segment
-		// of its own (the interjector case) — that letter can appear inside
+		// of its own (the interjector case), that letter can appear inside
 		// Crosstalk labels, be named, and keep its server-side voice embedding
 		const others = (Array.isArray(sg.speakers) ? sg.speakers : [])
 			.filter((s): s is string => typeof s === "string" && !!s)
@@ -5173,7 +5173,7 @@ export function whisperSizeWarning(bytes: number, endpoint: string): string | nu
 /* ---------------- copy summary + ISO week + series templates ---------------- */
 
 /** A capture note distilled for pasting into Teams or email: title, the
- *  Speakers line, and the extracted sections — frontmatter, Screens, Moments,
+ *  Speakers line, and the extracted sections, frontmatter, Screens, Moments,
  *  the transcript, and audio embeds stripped; wiki-links flattened to plain text
  *  (they mean nothing in an email).
  *
@@ -5236,7 +5236,7 @@ export function redactionActive(cfg: RedactionConfig): boolean {
 
 /** Mask sensitive text for sharing/export. Runs on note markdown or plain
  *  summary text; each term also matches its `[[wiki-link]]` form so a redacted
- *  name never leaks through a link. Never mutates the source note — callers
+ *  name never leaks through a link. Never mutates the source note, callers
  *  apply this only to clipboard/exported output. */
 export function redact(text: string, cfg: RedactionConfig): string {
 	let out = text;
@@ -5490,7 +5490,7 @@ export function parseCaptureForExport(md: string, fallbackTitle = ""): ExportMod
 				sections.push({ heading, kind: "tasks", paragraphs: [], bullets: [], tasks, images });
 				continue;
 			}
-			// no real task rows — fall through and render whatever content exists
+			// no real task rows, fall through and render whatever content exists
 		}
 		const bulletLines = lines.filter(isBul);
 		if (bulletLines.length) {
@@ -5514,7 +5514,7 @@ export function extractionsFromKeys(keys: string[]): Record<ExtractionKey, boole
 	return out;
 }
 
-/** The chosen (true) extraction keys, in canonical order — what a per-series
+/** The chosen (true) extraction keys, in canonical order, what a per-series
  *  default remembers. */
 export function chosenKeys(chosen: Partial<Record<ExtractionKey, boolean>>): ExtractionKey[] {
 	return EXTRACTIONS.map((e) => e.key).filter((k) => chosen[k]);
@@ -5595,7 +5595,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 /**
  * The same three-way rule, entry by entry.
  *
- * A key holding one value per item — per folder, per field, per speaker — is a
+ * A key holding one value per item (per folder, per field, per speaker) is a
  * whole vault's worth of settings behind a single name, and merging it whole
  * meant changing ONE of them published all of them. Every item another device
  * configured since this one last read was erased by a device that had never
