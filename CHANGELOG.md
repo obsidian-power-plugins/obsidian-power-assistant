@@ -18,6 +18,7 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 ### Fixed
 
 - **A post captured through yt-dlp records its reply count.** yt-dlp calls it the comment count and the plugin was not reading it, so the same post filed with a video had no `replies` property while one filed without a video did. Both now record it, and refreshing a note written before this fills the property in.
+- **The MCP server stops calling tomorrow's bill overdue.** 1.88.0 moved every date the plugin writes onto the local clock and missed one reader: the standalone MCP server in `mcp/`, which is not part of the plugin bundle and was not swept up with it. Its `finances_summary` decided which bills are late by comparing their due dates — dates the plugin wrote off your own calendar — against the day in Greenwich, so from the early evening onward a bill due tomorrow was reported to Claude as already overdue. It reads the local day now, from its own copy of `dayOf`, having no build step to import the plugin's through.
 
 ## 1.88.0
 

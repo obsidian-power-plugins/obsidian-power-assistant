@@ -27,6 +27,17 @@ function safeIsDir(p) {
 	}
 }
 
+/** A moment's date where the user is, as YYYY-MM-DD. The same function as
+ *  `dayOf` in src/pipeline.ts, written out again because this server is a
+ *  standalone script with no build step to import through. Anything compared
+ *  against a date read out of a note has to use it: the plugin writes those
+ *  dates off the local clock, and the UTC day runs a bill overdue from the
+ *  early evening onward. */
+function dayOf(d) {
+	const p = (n) => String(n).padStart(2, "0");
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /* ---------------- a small, self-refreshing note index ---------------- */
 
 const SKIP_DIRS = new Set([".obsidian", ".trash", ".git", "node_modules"]);
@@ -183,7 +194,7 @@ function callTool(name, args) {
 	if (name === "finances_summary") {
 		const byCur = new Map();
 		const bills = [];
-		const today = new Date().toISOString().slice(0, 10);
+		const today = dayOf(new Date());
 		for (const [path, d] of cache) {
 			const fm = frontmatter(d.text);
 			if (fm.type !== "capture-doc") continue;
