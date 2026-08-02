@@ -5374,7 +5374,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		// that starting one by accident must be undoable: the thing telling you it
 		// is running is the thing that stops it, the same gesture as the queue count
 		let canceled = false;
-		progress.noticeEl.style.cursor = "pointer";
+		progress.noticeEl.addClass("pa-notice-clickable");
 		progress.noticeEl.addEventListener("click", () => {
 			canceled = true;
 			progress.setMessage("Power Assistant: stopping the scan…");
@@ -11104,7 +11104,9 @@ class LiveView extends ItemView {
 		this.monitorCtx = null;
 		this.analyser = null;
 		this.recBarEl?.removeClass("is-recording");
-		if (this.meterBar) this.meterBar.style.width = "0%";
+		// the meter's width is driven inline while recording; dropping the
+		// property returns it to the 0% the class already declares
+		if (this.meterBar) this.meterBar.style.removeProperty("width");
 		this.setStatus("Recording ended.");
 	}
 
@@ -11934,7 +11936,7 @@ class TextPromptModal extends Modal {
 		new Setting(c).addText((t) => {
 			input = t.inputEl;
 			t.setValue(this.value).onChange((v) => (this.value = v));
-			t.inputEl.style.width = "100%";
+			t.inputEl.addClass("ptc-prompt-input");
 			t.inputEl.addEventListener("keydown", (e) => {
 				if (e.key === "Enter") {
 					e.preventDefault();
@@ -12152,7 +12154,7 @@ class SpeakerEmojiModal extends Modal {
 		const custom = new Setting(c).setName("Paste your own");
 		const input = custom.controlEl.createEl("input", { attr: { type: "text", placeholder: "😀" } });
 		input.value = this.current || "";
-		input.style.width = "6rem";
+		input.addClass("pa-emoji-custom");
 		const useCustom = () => {
 			const v = input.value.trim();
 			this.onPick(v || null);

@@ -22,6 +22,12 @@
 	margin-top: 0;
 }
 
+/* the single-line answer box in a prompt modal, which should fill the row
+   rather than sit at the width Obsidian gives a settings control */
+.ptc-prompt-input {
+	width: 100%;
+}
+
 .ptc-modal-btns {
 	display: flex;
 	justify-content: flex-end;
@@ -144,6 +150,11 @@
 .pa-emoji-search {
 	width: 100%;
 	margin: 6px 0 8px;
+}
+
+/* "paste your own": wide enough for an emoji or two, not a whole row */
+.pa-emoji-custom {
+	width: 6rem;
 }
 
 .pa-emoji-grid {
@@ -1578,4 +1589,9 @@ textarea.pcap-template-area {
 /* A ribbon icon the user turned off in settings. */
 .pa-ribbon-hidden {
 	display: none;
+}
+
+/* A notice you can click to call off what it is reporting on. */
+.pa-notice-clickable {
+	cursor: pointer;
 }
