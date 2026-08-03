@@ -11316,6 +11316,39 @@ class RecordingBar {
 	}
 }
 
+/** The tap that feeds the live transcript, as an AudioWorklet module. It runs on
+ *  the audio thread, so it does as little as it can: fill a 4096-sample block
+ *  and hand it over, which is the same size the ScriptProcessorNode this
+ *  replaces used to deliver. The block is transferred rather than copied, and
+ *  resampling stays on the main thread in downsamplePCM16, where it is tested.
+ *
+ *  It ships as a string because addModule only takes a URL while a plugin is a
+ *  single bundled file: a blob URL is built from this and revoked once the
+ *  module is registered. */
+const PCM_TAP_WORKLET = `
+class PcmTap extends AudioWorkletProcessor {
+	constructor() {
+		super();
+		this.buf = new Float32Array(4096);
+		this.at = 0;
+	}
+	process(inputs) {
+		const ch = inputs[0] && inputs[0][0];
+		if (!ch) return true;
+		for (let i = 0; i < ch.length; i++) {
+			this.buf[this.at++] = ch[i];
+			if (this.at === this.buf.length) {
+				const out = this.buf.slice();
+				this.port.postMessage(out, [out.buffer]);
+				this.at = 0;
+			}
+		}
+		return true;
+	}
+}
+registerProcessor("pcm-tap", PcmTap);
+`;
+
 /** The realtime leg: a temp-token websocket to AssemblyAI streaming fed by a
  *  16 kHz PCM tap on the recording stream. Strictly best-effort: any failure
  *  here leaves the actual recording (and batch transcription) untouched. */
@@ -11361,7 +11394,13 @@ class LiveSession {
 		ws.binaryType = "arraybuffer";
 		ws.onopen = () => {
 			this.view?.setStatus("Live, transcribing…");
-			this.tapAudio();
+			// best-effort, like the rest of this: a tap that will not start costs
+			// the live transcript and nothing else, so it says so and stays out of
+			// the recording's way
+			this.tapAudio().catch((e: unknown) => {
+				console.warn("Power Assistant: live transcript tap unavailable.", e);
+				this.view?.setStatus("Live transcript unavailable (recording continues).");
+			});
 		};
 		ws.onmessage = (ev) => {
 			try {
@@ -11383,23 +11422,38 @@ class LiveSession {
 		};
 	}
 
-	private tapAudio() {
+	/** Fan the recording stream into the websocket as 16 kHz PCM. Loading the
+	 *  worklet module is asynchronous, so the context is handed to the field
+	 *  before the await: a stop() that lands mid-load still has something to
+	 *  close, and the graph is never wired up afterward. */
+	private async tapAudio() {
 		const ctx = new AudioContext();
 		this.ctx = ctx;
+		const url = URL.createObjectURL(new Blob([PCM_TAP_WORKLET], { type: "text/javascript" }));
+		try {
+			await ctx.audioWorklet.addModule(url);
+		} finally {
+			URL.revokeObjectURL(url);
+		}
+		if (this.stopped) return; // the recording ended while the module loaded
 		const src = ctx.createMediaStreamSource(this.stream);
-		const proc = ctx.createScriptProcessor(4096, 1, 1);
+		const tap = new AudioWorkletNode(ctx, "pcm-tap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
 		const mute = ctx.createGain();
-		mute.gain.value = 0; // the processor needs a route to destination to run; never audibly
-		proc.onaudioprocess = (e) => {
+		// the worklet writes no output, so this carries silence either way. It is
+		// here because a node with nothing downstream can be dropped from the
+		// render graph, and a tap that stops being given samples is a live
+		// transcript that quietly stops.
+		mute.gain.value = 0;
+		tap.port.onmessage = (e: MessageEvent<Float32Array>) => {
 			if (this.ws?.readyState === WebSocket.OPEN) {
-				const pcm = downsamplePCM16(e.inputBuffer.getChannelData(0), ctx.sampleRate);
+				const pcm = downsamplePCM16(e.data, ctx.sampleRate);
 				this.ws.send(pcm.buffer);
 			}
 		};
-		src.connect(proc);
-		proc.connect(mute);
+		src.connect(tap);
+		tap.connect(mute);
 		mute.connect(ctx.destination);
-		this.nodes = [src, proc, mute];
+		this.nodes = [src, tap, mute];
 	}
 
 	stop(status?: string) {
