@@ -11437,7 +11437,21 @@ class LiveSession {
 		}
 		if (this.stopped) return; // the recording ended while the module loaded
 		const src = ctx.createMediaStreamSource(this.stream);
-		const tap = new AudioWorkletNode(ctx, "pcm-tap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+		// Explicit mono on the input. The worklet reads one channel, and a
+		// recording that captures system audio is a stereo mix: the mic and the
+		// desktop meet in a MediaStreamAudioDestinationNode, which has two.
+		// Left to itself the node takes its channel count from whatever is
+		// connected and hands the worklet both, of which it reads the left one,
+		// so anything that sat on the right alone never reaches the transcript.
+		// Explicit makes the node downmix first, which is what the
+		// createScriptProcessor(4096, 1, 1) this replaced always did.
+		const tap = new AudioWorkletNode(ctx, "pcm-tap", {
+			numberOfInputs: 1,
+			numberOfOutputs: 1,
+			outputChannelCount: [1],
+			channelCount: 1,
+			channelCountMode: "explicit",
+		});
 		const mute = ctx.createGain();
 		// the worklet writes no output, so this carries silence either way. It is
 		// here because a node with nothing downstream can be dropped from the
