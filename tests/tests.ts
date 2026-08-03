@@ -20,7 +20,7 @@ import {
 	renderFilename,
 	tokenize,
 	youtubeVideoId,
-} from "./pipeline";
+} from "../src/pipeline";
 
 let fails = 0;
 function ok(cond: unknown, name: string) {
@@ -53,7 +53,7 @@ ok(p.user.includes("we agreed to ship friday"), "transcript is included");
 ok(p.system.includes("| Task | Owner | Due |"), "action-items table shape is specified");
 {
 	// video-oriented sections and the Video notes template
-	const { TEMPLATES } = require("./pipeline");
+	const { TEMPLATES } = require("../src/pipeline");
 	const vp = buildExtractionPrompt(["summary", "takeaways", "facts", "resources", "quotes", "questions", "keywords"], "a creator explains image tokens");
 	ok(vp.user.includes("## Key takeaways") && vp.user.includes("## Facts & figures") && vp.user.includes("## Resources mentioned") && vp.user.includes("## Notable quotes"), "video sections are requested");
 	ok(!vp.user.includes("## Action items") && !vp.user.includes("## Decisions") && !vp.user.includes("## Risks"), "meeting sections are absent from video notes");
@@ -94,13 +94,13 @@ const bare = assembleNote({
 ok(bare.includes("No extraction ran") && !bare.includes("## Transcript") && !bare.includes("model:"), "keyless note degrades gracefully");
 ok(bare.includes('source: "https://youtu.be/x"') && !bare.includes("![["), "url source carries no embed");
 {
-	const { tagify } = require("./pipeline");
+	const { tagify } = require("../src/pipeline");
 	eq(tagify("claude-haiku-4-5"), "claude-haiku-4-5", "a model id is already a valid tag");
 	eq(tagify("claude opus 4.8"), "claude-opus-4-8", "spaces and dots become hyphens");
 	eq(tagify("#weird--/tag--"), "weird-/tag", "leading hash gone, hyphens collapsed and trimmed");
 }
 {
-	const { ensureUrlScheme } = require("./pipeline");
+	const { ensureUrlScheme } = require("../src/pipeline");
 	eq(ensureUrlScheme("youtube.com/watch?v=abc"), "https://youtube.com/watch?v=abc", "a scheme-less URL gets https://");
 	eq(ensureUrlScheme("  www.youtube.com/watch?v=abc  "), "https://www.youtube.com/watch?v=abc", "trims, then prefixes the scheme");
 	eq(ensureUrlScheme("https://youtu.be/abc"), "https://youtu.be/abc", "an https URL is left alone");
@@ -156,7 +156,7 @@ eq(meta.tracks[0].baseUrl, "https://yt.example/api?v=abc&lang=en", "caption base
 eq(meta.tracks[0].languageCode, "en", "language code survives");
 eq(extractYoutubeMeta("<html>no captions here</html>"), null, "caption-less pages return null");
 {
-	const { extractYoutubeInfo, youtubeProps } = require("./pipeline");
+	const { extractYoutubeInfo, youtubeProps } = require("../src/pipeline");
 	const page =
 		'x,"videoDetails":{"videoId":"abc","title":"China Is About To Pop The AI Bubble","lengthSeconds":"754","channelId":"UCGaVdbSav8xWuFWTadK6loA","author":"Andrei Jikh","viewCount":"1400000"},' +
 		'"canonicalBaseUrl":"/@andreijikh","publishDate":"2026-07-07","subscriberCountText":{"simpleText":"3.28M subscribers"},z';
@@ -180,7 +180,7 @@ eq(extractYoutubeMeta("<html>no captions here</html>"), null, "caption-less page
 	const bare = extractYoutubeInfo("<html>nothing</html>");
 	eq(bare.title, "YouTube video", "missing metadata falls back to a generic title");
 	eq(youtubeProps(bare).length, 0, "no metadata means no extra properties");
-	const { pickYoutubeAudio } = require("./pipeline");
+	const { pickYoutubeAudio } = require("../src/pipeline");
 	eq(pickYoutubeAudio(undefined), null, "no formats yields null");
 	eq(pickYoutubeAudio([{ mimeType: "video/mp4", url: "v" }]), null, "video-only formats are skipped");
 	eq(pickYoutubeAudio([{ mimeType: "audio/webm; codecs=opus", url: "hi", bitrate: 130000 }, { mimeType: "audio/mp4", url: "lo", bitrate: 48000 }]).url, "lo", "the lowest-bitrate audio wins");
@@ -202,8 +202,8 @@ eq(youtubeVideoId("https://www.youtube.com/shorts/e8CW4_yU5Ko"), "e8CW4_yU5Ko", 
 eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield null");
 {
 	// --- capture from a link ---
-	const { xStatusId, isXUrl, postTitleFromText, parseMediaInfo, mediaProps, ytDlpInvocations, ytDlpInfoArgs, ytDlpAudioArgs } = require("./pipeline");
-	const { hostOf, mediaSiteFor, routeFor, cookieArgs, renderFolder, parseWebMeta, webProps, siteNameFromUrl, cleanArticleMarkdown } = require("./pipeline");
+	const { xStatusId, isXUrl, postTitleFromText, parseMediaInfo, mediaProps, ytDlpInvocations, ytDlpInfoArgs, ytDlpAudioArgs } = require("../src/pipeline");
+	const { hostOf, mediaSiteFor, routeFor, cookieArgs, renderFolder, parseWebMeta, webProps, siteNameFromUrl, cleanArticleMarkdown } = require("../src/pipeline");
 
 	// routing: YouTube keeps its free-caption path, known media sites go to
 	// yt-dlp, and anything else is read as an article
@@ -320,7 +320,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	// --- posts with no video ---
 	// yt-dlp refuses a post that carries no media, which is most posts. That is a
 	// route, not a failure: the words are still the thing worth capturing.
-	const { NO_MEDIA_RE, xOembedUrl, parseTweetOembed, isoFromLongDate } = require("./pipeline");
+	const { NO_MEDIA_RE, xOembedUrl, parseTweetOembed, isoFromLongDate } = require("../src/pipeline");
 	ok(NO_MEDIA_RE.test("ERROR: [twitter] 2077361679034118271: No video could be found in this tweet"), "yt-dlp's real no-video wording is recognized");
 	ok(NO_MEDIA_RE.test("ERROR: Unsupported URL: https://example.com/x"), "an unsupported URL routes the same way");
 	ok(NO_MEDIA_RE.test("No video formats found!"), "the no-formats wording is recognized");
@@ -369,7 +369,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	// --- a post's own context ---
 	// A quote-post's words routinely mean nothing alone, so the embed payload's
 	// quoted and replied-to posts are the difference between a note and a fragment.
-	const { xSyndicationToken, xSyndicationUrl, quotedBlock, parseTweetEmbed } = require("./pipeline");
+	const { xSyndicationToken, xSyndicationUrl, quotedBlock, parseTweetEmbed } = require("../src/pipeline");
 	eq(xSyndicationToken("2078879781806919870"), "2bcaovicyz", "the embed token matches what X's own widget derives, verified live");
 	ok(xSyndicationUrl("123").includes("token="), "the embed URL carries the derived token");
 	ok(xSyndicationUrl("123").includes("id=123"), "the embed URL carries the post id");
@@ -412,7 +412,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	// X appends a t.co link to the text of any post carrying media, so a wordless
 	// video post arrives looking like a one-line post whose line is a link. Reading
 	// it as words is what put "I cannot process this request" in a note.
-	const { postWords, tweetOwnText, hasWordsToExtract } = require("./pipeline");
+	const { postWords, tweetOwnText, hasWordsToExtract } = require("../src/pipeline");
 	eq(postWords("https://t.co/XneE327cx9"), "", "a bare media link is no words at all");
 	eq(postWords("Watch this https://t.co/abc"), "Watch this", "words next to one still count as words");
 	eq(tweetOwnText({ text: "https://t.co/abc", entities: { media: [{ url: "https://t.co/abc" }] } }), "", "the link X appended for the post's own video is not the post's text");
@@ -440,7 +440,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	// --- re-reading a captured post's counts ---
 	// A capture is a snapshot; likes and views keep moving after it is filed.
 	{
-		const { refreshableSource, statUpdates, statSummary } = require("./pipeline");
+		const { refreshableSource, statUpdates, statSummary } = require("../src/pipeline");
 		const post = { tags: ["capture"], source: "https://x.com/elonmusk/status/2082243743013614012" };
 		eq(refreshableSource(post), "https://x.com/elonmusk/status/2082243743013614012", "a captured post can be read again");
 		eq(refreshableSource({ type: "capture", source: "https://www.youtube.com/watch?v=abc" }), "https://www.youtube.com/watch?v=abc", "so can any other site yt-dlp handles");
@@ -500,8 +500,8 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(siteNameFromUrl("https://news.ycombinator.com/item?id=1"), "news.ycombinator", "a multi-part host keeps its subdomain");
 
 	// --- sharing a page outside the vault ---
-	const { flattenForShare, splitLeadingTitle, parseRecipients, invalidRecipients } = require("./pipeline");
-	const { shareEmailHtml, escapeHtml } = require("./share-html");
+	const { flattenForShare, splitLeadingTitle, parseRecipients, invalidRecipients } = require("../src/pipeline");
+	const { shareEmailHtml, escapeHtml } = require("../src/share-html");
 
 	// the two that are about privacy rather than tidiness
 	eq(flattenForShare("Before %%a private note%% after"), "Before  after", "an Obsidian comment never leaves the vault");
@@ -548,7 +548,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(escapeHtml('<script>"x"&y</script>'), "&lt;script&gt;&quot;x&quot;&amp;y&lt;/script&gt;", "html escapes");
 
 	// --- MSN, whose article text never reaches the page reader ---
-	const { msnArticleRef, msnApiUrl, parseMsnArticle } = require("./pipeline");
+	const { msnArticleRef, msnApiUrl, parseMsnArticle } = require("../src/pipeline");
 	eq(
 		msnArticleRef("https://www.msn.com/en-us/news/politics/new-poll-shows-top/ar-AA27ZYkP?ocid=hpmsn&cvid=6a59&ei=17"),
 		{ id: "AA27ZYkP", locale: "en-us" },
@@ -669,7 +669,7 @@ import {
 	parseStamp,
 	seriesKey,
 	speakerLetters,
-} from "./pipeline";
+} from "../src/pipeline";
 
 eq(parseStamp("[1:02]"), 62, "bracketed m:ss stamp");
 eq(parseStamp("1:01:01"), 3661, "bare h:mm:ss stamp");
@@ -733,14 +733,14 @@ eq(seriesKey("1:1 with John"), "with-john", "counters strip");
 }
 
 // --- partForStamp ---
-import { partForStamp } from "./pipeline";
+import { partForStamp } from "../src/pipeline";
 eq(partForStamp([0, 2700000], 100), { index: 0, secondsInPart: 100 }, "early stamp lands in part 1");
 eq(partForStamp([0, 2700000], 2852), { index: 1, secondsInPart: 152 }, "late stamp lands in part 2, rebased");
 eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes through");
 
 // --- grabbing a frame at a stamp ---
 {
-	const { stampSecsOnLine, frameFileName, frameEmbedLine } = require("./pipeline");
+	const { stampSecsOnLine, frameFileName, frameEmbedLine } = require("../src/pipeline");
 	const turn = "**Darwin [1:02]:** the shared screen is this one.";
 	eq(stampSecsOnLine(turn), 62, "the stamp on a transcript turn resolves");
 	eq(stampSecsOnLine(turn, 40), 62, "a cursor out in the words still resolves that turn's stamp");
@@ -769,7 +769,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- picking which frames become screens ---
 {
-	const { pickSceneFrames, formatScreens, replaceExtractedBody } = require("./pipeline");
+	const { pickSceneFrames, formatScreens, replaceExtractedBody } = require("../src/pipeline");
 	const s = (ms: number, diff: number) => ({ ms, diff });
 
 	eq(pickSceneFrames([], 12, 12), [], "no samples, no screens");
@@ -815,7 +815,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- splicing Screens into a note that already exists (the imported-transcript case) ---
 {
-	const { withScreensSection } = require("./pipeline");
+	const { withScreensSection } = require("../src/pipeline");
 	const base = ["---", "date: d", "---", "# Atlas", "", "## Summary", "", "a summary", "", "## Transcript", "", "**A [0:01]:** hi", ""].join("\n");
 
 	const added = withScreensSection(base, "**[1:00]** ![[a.webp]]");
@@ -859,7 +859,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- placing each screen beside the point it illustrates ---
 {
-	const { illustrateBody } = require("./pipeline");
+	const { illustrateBody } = require("../src/pipeline");
 	const f = (ms: number, link: string, text = "") => ({ ms, link, text });
 	const body = ["## Summary", "", "- Inventory design settled [7:03]", "- Composable screens reviewed [31:43]", "", "## Keywords", "", "atlas, inventory"].join("\n");
 
@@ -914,7 +914,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- the frame manifest that outlives a re-extract ---
 {
-	const { parseScreensJson } = require("./pipeline");
+	const { parseScreensJson } = require("../src/pipeline");
 	eq(parseScreensJson(undefined), [], "nothing recorded, no frames");
 	eq(parseScreensJson(""), [], "an empty property is not a manifest");
 	eq(parseScreensJson("not json"), [], "unparseable frontmatter degrades to empty");
@@ -929,7 +929,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- a marked moment is a grab point too ---
 {
-	const { withMomentFrames, momentsFromNote } = require("./pipeline");
+	const { withMomentFrames, momentsFromNote } = require("../src/pipeline");
 	const mark = (ms: number, label = "Mark") => ({ ms, label });
 
 	eq(withMomentFrames([1000, 60000], []), [1000, 60000], "no marks, no change");
@@ -953,7 +953,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- illustrating a note that already exists (re-extract and the Teams flow) ---
 {
-	const { illustrateNote } = require("./pipeline");
+	const { illustrateNote } = require("../src/pipeline");
 	const f = (ms: number, link: string, text = "") => ({ ms, link, text });
 	const note = [
 		"---", "date: 2026-07-29", "---", "# Atlas", "", "**Speakers:** Priya (60%), Tomas (40%)", "",
@@ -980,7 +980,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- what a person page and a digest quote from a section ---
 {
-	const { sectionListItems } = require("./pipeline");
+	const { sectionListItems } = require("../src/pipeline");
 	// an illustrated Decisions section: the frame and its caption belong to the
 	// decision above them, and must never be listed as decisions of their own
 	const md = [
@@ -1002,7 +1002,7 @@ eq(partForStamp([0], 42), { index: 0, secondsInPart: 42 }, "single part passes t
 
 // --- the round trip that matters: illustrate, re-extract, illustrate again ---
 {
-	const { illustrateNote, replaceExtractedBody, withScreensSection, formatScreens, parseScreensJson } = require("./pipeline");
+	const { illustrateNote, replaceExtractedBody, withScreensSection, formatScreens, parseScreensJson } = require("../src/pipeline");
 	const f = (ms: number, link: string, text = "") => ({ ms, link, text });
 	const frames = [f(423000, "a.webp", "ATLAS Architecture"), f(1903000, "b.webp")];
 
@@ -1100,7 +1100,7 @@ import {
 	renameSpeakerLabels,
 	talkShares,
 	transcriptSpeakers,
-} from "./pipeline";
+} from "../src/pipeline";
 
 {
 	const shares = talkShares([
@@ -1154,7 +1154,7 @@ import {
 	);
 }
 {
-	const { applyCorrections, countTerm } = require("./pipeline");
+	const { applyCorrections, countTerm } = require("../src/pipeline");
 	const t = "**George [23:51]:** Alright, Shaker. **Deverakonda Rajasekhar [23:56]:** Yeah. Shaker rules. Shakerville stays.";
 	const out = applyCorrections(t, [{ from: "Deverakonda Rajasekhar", to: "Sekhar" }, { from: "Shaker", to: "Sekhar" }]);
 	ok(out.includes("**Sekhar [23:56]:**"), "the full invite name is swapped in the speaker label");
@@ -1179,13 +1179,13 @@ import {
 	);
 }
 {
-	const { speakerColor } = require("./pipeline");
+	const { speakerColor } = require("../src/pipeline");
 	eq(speakerColor("George"), speakerColor("George"), "a speaker's color is stable across calls");
 	ok(/^#[0-9a-f]{6}$/i.test(speakerColor("Sekhar")), "returns a hex color");
 	ok(new Set(["George", "Sekhar", "Steve", "Adam", "Alex", "Deverakonda Rajasekhar"].map(speakerColor)).size >= 3, "distinct speakers get a spread of colors");
 }
 {
-	const { correctionRanges } = require("./pipeline");
+	const { correctionRanges } = require("../src/pipeline");
 	const t = "Speaker A said hi. Speaker A again. Speaker Alpha stays.";
 	const r = correctionRanges(t, "Speaker A");
 	eq(r.length, 2, "finds each whole-word occurrence, not the one inside Speaker Alpha");
@@ -1193,7 +1193,7 @@ import {
 	eq(correctionRanges(t, "").length, 0, "an empty term yields no ranges");
 }
 {
-	const { parseTranscriptSpeakerLine, parseTranscriptHeaderLine } = require("./pipeline");
+	const { parseTranscriptSpeakerLine, parseTranscriptHeaderLine } = require("../src/pipeline");
 	const line = "> **Darwin [1:59]:** Hey, Shaker.";
 	const p = parseTranscriptSpeakerLine(line);
 	ok(p, "a speaker line parses");
@@ -1219,7 +1219,7 @@ import {
 }
 {
 	// --- reading a transcript back, moving one turn, and the clips that let you hear a speaker ---
-	const { transcriptToUtterances, reassignTranscriptTurn, rebuildSpeakersLine, pickSpeakerSamples } = require("./pipeline");
+	const { transcriptToUtterances, reassignTranscriptTurn, rebuildSpeakersLine, pickSpeakerSamples } = require("../src/pipeline");
 	const md = [
 		"# Standup",
 		"",
@@ -1285,7 +1285,7 @@ import {
 }
 {
 	// --- diarization letters must never become standing corrections ---
-	const { isSpeakerLetterTerm } = require("./pipeline");
+	const { isSpeakerLetterTerm } = require("../src/pipeline");
 	ok(isSpeakerLetterTerm("Speaker A"), "a plain letter label is a letter term");
 	ok(isSpeakerLetterTerm("Speaker 1A"), "a multi-part letter label is a letter term");
 	ok(isSpeakerLetterTerm(" SPEAKER B "), "case and padding do not hide a letter term");
@@ -1378,7 +1378,7 @@ import {
 	replaceExtractedBody,
 	sectionText,
 	taskOwner,
-} from "./pipeline";
+} from "../src/pipeline";
 
 eq(parseClock("00:00:05.000"), 5000, "vtt clock with hours");
 eq(parseClock("02:03,500"), 123500, "srt comma clock");
@@ -1427,7 +1427,7 @@ ok(!isAnonymousLabel("Jo") && !isAnonymousLabel("Ed") && !isAnonymousLabel("TJ")
 
 {
 	// --- voiceprints: recognizing a speaker across recordings ---
-	const { l2normalize, cosine, enrollVoiceprint, matchVoiceprint, forgetVoiceprint, parseWhisperX } = require("./pipeline");
+	const { l2normalize, cosine, enrollVoiceprint, matchVoiceprint, forgetVoiceprint, parseWhisperX } = require("../src/pipeline");
 	const near = (a: number[], b: number[], name: string) =>
 		ok(Array.isArray(a) && a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 1e-9), name);
 
@@ -1501,7 +1501,7 @@ ok(!isAnonymousLabel("Jo") && !isAnonymousLabel("Ed") && !isAnonymousLabel("TJ")
 
 {
 	// --- voiceprint management: load, summarize, gate, rename/merge ---
-	const { enrollVoiceprint, renameVoiceprint, usableEmbedding, parseVoiceprintLibrary, summarizeVoiceprints } = require("./pipeline");
+	const { enrollVoiceprint, renameVoiceprint, usableEmbedding, parseVoiceprintLibrary, summarizeVoiceprints } = require("../src/pipeline");
 
 	const base = enrollVoiceprint(enrollVoiceprint([], "A", [1, 0, 0], 1), "B", [0, 1, 0], 1);
 
@@ -1556,7 +1556,7 @@ ok(!isAnonymousLabel("Jo") && !isAnonymousLabel("Ed") && !isAnonymousLabel("TJ")
 
 {
 	// --- per-turn voice review: part alignment, cluster splitting, bounds ---
-	const { parseWhisperX, mergeDiarizedParts, reviewSpeakerClusters, expectedSpeakerBounds, enrollVoiceprint } = require("./pipeline");
+	const { parseWhisperX, mergeDiarizedParts, reviewSpeakerClusters, expectedSpeakerBounds, enrollVoiceprint } = require("../src/pipeline");
 	const u = (speaker: string, start: number, end: number, text = "x") => ({ speaker, text, start, end });
 	const t = (speaker: string, start: number, end: number, vector: number[]) => ({ speaker, start, end, seconds: (end - start) / 1000, vector });
 
@@ -2177,7 +2177,7 @@ ok(estimateCost("claude-haiku-4-5", 1000, 100, 0, null)!.startsWith("≈$0.01"),
 
 // --- crosstalk: overlapping speech gets an honest label, not a wrong name ---
 {
-	const { parseCrosstalkLabel, renameSpeakerLabels, transcriptSpeakers, transcriptToUtterances, parseTranscriptSpeakerLine, mergeDiarizedParts, reviewSpeakerClusters, talkShares, enrollVoiceprint } = require("./pipeline");
+	const { parseCrosstalkLabel, renameSpeakerLabels, transcriptSpeakers, transcriptToUtterances, parseTranscriptSpeakerLine, mergeDiarizedParts, reviewSpeakerClusters, talkShares, enrollVoiceprint } = require("../src/pipeline");
 
 	// the label and its inverse
 	eq(
@@ -2346,7 +2346,7 @@ import {
 	memoAttendees,
 	retryDelayMs,
 	whisperSizeWarning,
-} from "./pipeline";
+} from "../src/pipeline";
 
 eq(retryDelayMs(0), 1000, "first backoff is the base");
 eq(retryDelayMs(2), 4000, "backoff doubles");
@@ -2479,7 +2479,7 @@ ok(isoWeek("2026-07-06") === isoWeek("2026-07-12"), "a Mon-Sun span shares one w
 // Every date these build is read off the local clock, so the assertions hold in
 // any zone: a Date built from local parts is that local moment by construction.
 {
-	const { dayOf, today, daysAgo, clockOf } = require("./pipeline");
+	const { dayOf, today, daysAgo, clockOf } = require("../src/pipeline");
 	// the moment that started this: a post captured at 9:16 PM on Saturday Aug 1
 	// was filed as Aug 2, because that is the date in Greenwich
 	const evening = new Date(2026, 7, 1, 21, 16, 9);
@@ -2510,7 +2510,7 @@ ok(isoWeek("2026-07-06") === isoWeek("2026-07-12"), "a Mon-Sun span shares one w
 }
 
 // --- 1.1: Word (.docx) export model ---
-import { longDate, parseActionRow, parseCaptureForExport } from "./pipeline";
+import { longDate, parseActionRow, parseCaptureForExport } from "../src/pipeline";
 
 eq(longDate("2026-07-01"), "Wednesday, July 1, 2026", "long date formats with weekday");
 eq(longDate("2026-12-25"), "Friday, December 25, 2026", "long date, December");
@@ -2607,10 +2607,10 @@ eq(parseCaptureForExport("# Empty\n## Summary\n*None identified.*").sections.len
 }
 
 // --- 1.2: redaction + custom templates ---
-import { allTemplates, cleanFolderPath, redact, redactionActive, resolveRecordingFolder } from "./pipeline";
+import { allTemplates, cleanFolderPath, redact, redactionActive, resolveRecordingFolder } from "../src/pipeline";
 
 // --- meeting notes ---
-import { DEFAULT_MEETING_TEMPLATE, LEGACY_MEETING_TEMPLATES, templateBodyOf, buildMeetingStub, isCaptureNote, mergeMeetingCapture, parseMeetingMeta, personLink, personName, renderMeetingFilename, renderMeetingTemplate } from "./pipeline";
+import { DEFAULT_MEETING_TEMPLATE, LEGACY_MEETING_TEMPLATES, templateBodyOf, buildMeetingStub, isCaptureNote, mergeMeetingCapture, parseMeetingMeta, personLink, personName, renderMeetingFilename, renderMeetingTemplate } from "../src/pipeline";
 
 eq(renderMeetingFilename("{{date}} {{title}}", "Budget Review", "2026-07-14"), "2026-07-14 Budget Review.md", "meeting filename from date + title");
 eq(renderMeetingFilename("", "", "2026-07-14"), "2026-07-14 Meeting.md", "empty title falls back to Meeting; default pattern");
@@ -2766,7 +2766,7 @@ eq(renderMeetingFilename("{{title}}", "a/b: c", "d"), "a-b- c.md", "unsafe filen
 }
 
 // --- invite import ---
-import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
+import { eventToInvite, parseMeetingInvite, tidyAgenda } from "../src/pipeline";
 {
 	// Outlook's bullet glyphs (and a bullet stranded on its own line) become
 	// clean, tight, nested Markdown
@@ -2837,14 +2837,14 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 	ok(rec.includes('recorded: "2:47 PM - 3:12 PM"'), "the actual recording time lands in the frontmatter");
 }
 {
-	const { stripTranscriptCallout } = require("./pipeline");
+	const { stripTranscriptCallout } = require("../src/pipeline");
 	const callout = "## Transcript\n\n> [!transcript]- Transcript\n> **George [0:00]:** hi\n>\n> **Steve [0:05]:** yo";
 	const plain = stripTranscriptCallout(callout);
 	eq(plain, "## Transcript\n\n**George [0:00]:** hi\n\n**Steve [0:05]:** yo", "the callout unwraps to plain, blank-separated speaker lines");
 	eq(stripTranscriptCallout("## Notes\n\nnothing here"), "## Notes\n\nnothing here", "a note without a transcript callout is unchanged");
 }
 {
-	const { fmtClock, currentTurn } = require("./pipeline");
+	const { fmtClock, currentTurn } = require("../src/pipeline");
 	eq(fmtClock(5), "0:05", "short times pad seconds");
 	eq(fmtClock(65), "1:05", "minutes and seconds");
 	eq(fmtClock(4112), "1:08:32", "hours show with padded minutes");
@@ -2856,7 +2856,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 	eq(currentTurn(times, -1), -1, "before the first turn is -1");
 }
 {
-	const { interpolatedTime } = require("./pipeline");
+	const { interpolatedTime } = require("../src/pipeline");
 	eq(interpolatedTime(60, 120, 0, 100), 60, "the start of a turn is the turn start");
 	eq(interpolatedTime(60, 120, 50, 100), 90, "halfway through a turn is the midpoint of its span");
 	eq(interpolatedTime(60, 120, 100, 100), 120, "the end of a turn is the next turn's start");
@@ -2865,7 +2865,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// Deepgram diarized response -> shared Utterance shape
-	const { parseDeepgram } = require("./pipeline");
+	const { parseDeepgram } = require("../src/pipeline");
 	const dg = {
 		results: {
 			channels: [{ alternatives: [{ transcript: "hello there how are you" }] }],
@@ -2885,7 +2885,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 	eq(parseDeepgram({ results: { channels: [{ alternatives: [{ transcript: "solo" }] }] } }).text, "solo", "deepgram transcript without utterances still returns text");
 }
 {
-	const { humanizeError } = require("./pipeline");
+	const { humanizeError } = require("../src/pipeline");
 	eq(
 		humanizeError('400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low."},"request_id":"x"}'),
 		"Your credit balance is too low.",
@@ -2896,7 +2896,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// the sidebar assistant: grounded multi-turn messages + saved chat notes
-	const { ASSISTANT_SYSTEM, buildAssistantMessages, parseChatSummary, buildChatNote } = require("./pipeline");
+	const { ASSISTANT_SYSTEM, buildAssistantMessages, parseChatSummary, buildChatNote } = require("../src/pipeline");
 	ok(ASSISTANT_SYSTEM.includes("wiki-link"), "assistant system prompt demands citations");
 	const history = [
 		{ role: "user", content: "Q1" },
@@ -2925,7 +2925,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// semantic search: cosine, embedding parse, and rank fusion
-	const { cosine, parseEmbeddingResponse, fuseHits } = require("./pipeline");
+	const { cosine, parseEmbeddingResponse, fuseHits } = require("../src/pipeline");
 	ok(Math.abs(cosine([1, 0], [1, 0]) - 1) < 1e-9, "identical vectors score 1");
 	ok(Math.abs(cosine([1, 0], [0, 1])) < 1e-9, "orthogonal vectors score 0");
 	ok(cosine([1, 2, 3], [2, 4, 6]) > 0.999, "parallel vectors score ~1 regardless of magnitude");
@@ -2936,7 +2936,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 
 	// --- progress reporting for long jobs ---
 	{
-		const { fmtDuration, progressLine } = require("./pipeline");
+		const { fmtDuration, progressLine } = require("../src/pipeline");
 		eq(fmtDuration(4200), "4s", "seconds under a minute");
 		eq(fmtDuration(90_000), "2 min", "rounded to minutes");
 		eq(fmtDuration(3_900_000), "1h 5m", "hours and minutes past an hour");
@@ -2956,7 +2956,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 
 	// --- pickLanAddress: the address the REST of the fleet can reach ---
 	{
-		const { pickLanAddress } = require("./pipeline");
+		const { pickLanAddress } = require("../src/pipeline");
 		const ip = (address: string) => [{ family: "IPv4", internal: false, address }];
 		// THE ONE THAT MATTERS: a VPN tunnel answers on this machine but is
 		// unreachable from the phone, and this address syncs to every device.
@@ -2992,7 +2992,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// finances rollup: per-currency totals, bills, by-vendor/month
-	const { buildFinancesRollup } = require("./pipeline");
+	const { buildFinancesRollup } = require("../src/pipeline");
 	const docs = [
 		{ title: "Meralco bill", path: "Documents/Bills/2026/Meralco.md", vendor: "Meralco", docType: "bill", amount: 3400, currency: "PHP", date: "2026-07-05", due: "2026-07-10" },
 		{ title: "Costco", path: "Documents/Receipts/2026/Costco.md", vendor: "Costco", docType: "receipt", amount: 128.53, currency: "PHP", date: "2026-07-11", due: "" },
@@ -3011,7 +3011,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// drafting: context distillation + grounded prompt
-	const { DRAFT_KINDS, buildDraftContext, buildDraftPrompt } = require("./pipeline");
+	const { DRAFT_KINDS, buildDraftContext, buildDraftPrompt } = require("../src/pipeline");
 	const md =
 		'---\ndate: 2026-07-14\nattendees:\n  - "[[People/Jordan|Jordan]]"\n---\n# Budget sync\n\n## Summary\n\nWe approved the Q3 plan.\n\n## Action items\n\n- [ ] Send the deck [[People/Steve|Steve]] 📅 2026-07-16\n\n## Transcript\n\n**Steve [0:00]:** secret words';
 	const ctx = buildDraftContext(md);
@@ -3030,7 +3030,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// the morning briefing: due-date parsing + the assembled note
-	const { taskDueDate, buildMorningBriefing } = require("./pipeline");
+	const { taskDueDate, buildMorningBriefing } = require("../src/pipeline");
 	eq(taskDueDate("- [ ] Ship it [[Steve]] 📅 2026-07-16"), "2026-07-16", "due date pulled from a task line");
 	eq(taskDueDate("- [ ] no date here"), "", "undated task yields empty");
 	const b = buildMorningBriefing(
@@ -3064,7 +3064,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// documents: extraction parsing, filing names/folders, and the doc note
-	const { buildDocExtractionPrompt, parseDocExtraction, emptyDocFields, docNiceName, docTargetFolder, buildDocNote } = require("./pipeline");
+	const { buildDocExtractionPrompt, parseDocExtraction, emptyDocFields, docNiceName, docTargetFolder, buildDocNote } = require("../src/pipeline");
 	ok(buildDocExtractionPrompt("receipt text").system.includes("ONLY a JSON object"), "extraction demands bare JSON");
 	eq(buildDocExtractionPrompt("x".repeat(20000)).user.length, 12000, "OCR text is capped");
 	const f = parseDocExtraction('```json\n{"docType":"Receipt","vendor":"Costco","date":"2026-07-11","amount":128.53,"currency":"usd","due":"","summary":"Groceries.","tags":["Groceries","FOOD"]}\n```');
@@ -3094,7 +3094,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// auto-filing rules: matching and resolving where a document files
-	const { matchDocRule, resolveDocFiling, docTargetFolder } = require("./pipeline");
+	const { matchDocRule, resolveDocFiling, docTargetFolder } = require("../src/pipeline");
 	const bill = { docType: "bill", vendor: "Meralco Electric", date: "2026-07-05", amount: 3400, currency: "PHP", due: "2026-07-10", summary: "Monthly power bill.", tags: ["utility"] };
 	ok(matchDocRule({ vendor: "meralco" }, bill, ""), "vendor match is case-insensitive substring");
 	ok(!matchDocRule({ vendor: "maynilad" }, bill, ""), "a non-matching vendor fails");
@@ -3118,7 +3118,7 @@ import { eventToInvite, parseMeetingInvite, tidyAgenda } from "./pipeline";
 }
 {
 	// Microsoft sign-in errors carry the actual fix for known setup problems
-	const { graphSetupHint } = require("./pipeline");
+	const { graphSetupHint } = require("../src/pipeline");
 	ok(String(graphSetupHint("AADSTS50059: No tenant-identifying information found")).includes("Directory (tenant) ID"), "single-tenant on common points at the tenant ID (50059)");
 	ok(String(graphSetupHint("AADSTS50194: Application is not configured as a multi-tenant application")).includes("Directory (tenant) ID"), "the multi-tenant variant maps too (50194)");
 	ok(String(graphSetupHint("AADSTS700016: Application not found in the directory")).includes("client) ID"), "an unknown app points at the client ID");
@@ -3277,7 +3277,7 @@ ok(redactionActive({ emails: true }) && redactionActive({ terms: ["X"] }), "acti
 }
 
 // --- PowerPoint decks ---
-import { buildDeckNote, notesText, pictureAction, relTargets, slideOrder, slideParagraphs, slidePictures, slideText } from "./pptx";
+import { buildDeckNote, notesText, pictureAction, relTargets, slideOrder, slideParagraphs, slidePictures, slideText } from "../src/pptx";
 {
 	eq(
 		slideOrder(["ppt/slides/slide10.xml", "ppt/slides/slide2.xml", "ppt/slides/_rels/slide1.xml.rels", "ppt/slides/slide1.xml"]),
@@ -3353,7 +3353,7 @@ import { buildDeckNote, notesText, pictureAction, relTargets, slideOrder, slideP
 		settleOrder,
 		allocateExtras,
 		buildTxnExtractionPrompt,
-	} = require("./transactions");
+	} = require("../src/transactions");
 
 	// -- normalization --
 	eq(
@@ -3579,7 +3579,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 // --- transactions phase 2: redaction, note building, write planning ---
 {
-	const { redactSecrets, txnOrderName, txnItemName, txnFolder, txnSafe, buildOrderNote, buildItemNote, planOrderWrites } = require("./transactions");
+	const { redactSecrets, txnOrderName, txnItemName, txnFolder, txnSafe, buildOrderNote, buildItemNote, planOrderWrites } = require("../src/transactions");
 
 	// -- redaction --
 	eq(redactSecrets("Product Key: MXNY6-T84BP-FP26W-QYWM6-8TYP6"), "Product Key: [redacted key]", "a license key is redacted");
@@ -3727,7 +3727,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 // --- transactions phase 3: mail rules and selection ---
 {
-	const { senderDomain, senderAddress, matchTxnRule, resolveTxnRule, selectTxnMail, rememberProcessed, applyTxnRule, DEFAULT_TXN_RULES } = require("./transactions");
+	const { senderDomain, senderAddress, matchTxnRule, resolveTxnRule, selectTxnMail, rememberProcessed, applyTxnRule, DEFAULT_TXN_RULES } = require("../src/transactions");
 
 	// THE ONE THAT MATTERS: CoServ's bills come from smarthub.coop, not
 	// coserv.com. A rule written against the brand's website never fires.
@@ -3799,7 +3799,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 // --- transactions: reading a saved .eml ---
 {
-	const { parseEmailFile, decodeQuotedPrintable, decodeHeaderWords, normalizeEmailHtml } = require("./transactions");
+	const { parseEmailFile, decodeQuotedPrintable, decodeHeaderWords, normalizeEmailHtml } = require("../src/transactions");
 
 	eq(decodeQuotedPrintable("a=3Db"), "a=b", "an escaped octet decodes");
 	eq(decodeQuotedPrintable("one=\ntwo"), "onetwo", "a soft line break is removed");
@@ -3886,7 +3886,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 	// per byte, so without a charset pass every smart quote becomes mojibake and
 	// Amazon's invisible bidi marks survive stripping as visible garbage.
 	{
-		const { decodeCharset } = require("./transactions");
+		const { decodeCharset } = require("../src/transactions");
 		eq(decodeCharset("Weâll", "utf-8"), "We’ll", "utf-8 bytes are reassembled into one character");
 		eq(decodeCharset("plain ascii", "us-ascii"), "plain ascii", "ascii is left alone");
 		// latin-1 bytes must not be mangled by a utf-8 reading
@@ -3928,7 +3928,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 // --- transactions phase 4: CSV backfill and categorizing ---
 {
-	const { parseCsv, csvDate, parseAmazonOrderCsv, buildCategorizePrompt, parseCategorized, reconcileOrder, settleOrder } = require("./transactions");
+	const { parseCsv, csvDate, parseAmazonOrderCsv, buildCategorizePrompt, parseCategorized, reconcileOrder, settleOrder } = require("../src/transactions");
 
 	// -- csv --
 	eq(parseCsv("a,b\n1,2"), [["a", "b"], ["1", "2"]], "a plain csv parses");
@@ -3996,7 +3996,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 // --- transactions phase 5: rollups and the base ---
 {
-	const { isoWeekKey, buildSpendRollup, buildTxnBase } = require("./transactions");
+	const { isoWeekKey, buildSpendRollup, buildTxnBase } = require("../src/transactions");
 
 	// -- iso weeks --
 	eq(isoWeekKey("2026-07-19"), "2026-W29", "a Sunday lands in the week of its Thursday");
@@ -4081,7 +4081,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 		senderName,
 		planWindowUpdate,
 		mailWindowStats,
-	} = require("./mailwindow");
+	} = require("../src/mailwindow");
 
 	// -- synthetic paths --
 	eq(mailHitPath("AAA"), "email:AAA", "a mail id becomes a synthetic email path");
@@ -4153,7 +4153,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 	// -- citation linkifying --
 	{
-		const { linkifyMailCitations } = require("./mailwindow");
+		const { linkifyMailCitations } = require("../src/mailwindow");
 		const table: Record<string, { from: string; subject: string; date: string; webLink?: string }> = {
 			a: { from: "Dana Reed <dana@x.com>", subject: "Q3 plan", date: "2026-07-10", webLink: "https://outlook.com/1" },
 			b: { from: "x@y.com", subject: "No link here", date: "2026-07-10" },
@@ -4193,7 +4193,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 		senderLabel,
 		senderAddress,
 		senderDomain,
-	} = require("./mailimport");
+	} = require("../src/mailimport");
 
 	const msg = (over: Record<string, unknown> = {}) => ({
 		id: "m1",
@@ -4210,7 +4210,7 @@ eq(mergeForSave({ k: 1 }, { k: 1 }, null), { k: 1 }, "no disk state yet = write 
 
 	// -- index coverage --
 	{
-		const { coverIndexFolders } = require("./mailimport");
+		const { coverIndexFolders } = require("../src/mailimport");
 		// THE ONE THAT MATTERS: mail imported into a folder nobody indexes is a
 		// corpus that answers nothing, with no error to explain it.
 		eq(coverIndexFolders(["Capture"], "Email"), ["Capture", "Email"], "the mail folder is added when nothing covers it");
