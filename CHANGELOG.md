@@ -2,6 +2,12 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.89.9
+
+### Changed
+
+- **Documents are read by Power Extract now, with Text Extractor kept as a fallback.** Processing a receipt or a bill starts by reading the text off it, and until now that reading was done by the Text Extractor community plugin, which has not been updated in seven months and downloads its OCR engine and language data from a CDN the first time it runs. Power Extract uses the recognizer already built into Windows instead: nothing is downloaded, no image leaves the machine, and on a sample of 80 images from a real vault it read 39,435 characters against 25,364, with a far higher share of it being actual words. A vault that still has Text Extractor and not Power Extract keeps working exactly as before, because both are tried in turn. PDFs are unaffected: their text has always been read by Obsidian's own bundled pdf.js and needs no companion plugin at all.
+
 ## 1.89.1
 
 ### Fixed

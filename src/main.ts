@@ -900,10 +900,14 @@ const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KH
  *  over a stub. */
 const MIN_ARTICLE_CHARS = 200;
 
-/** File kinds the document processor accepts: images (via Text Extractor's
- *  OCR) and PDFs (via Obsidian's bundled pdf.js). */
+/** File kinds the document processor accepts: images (via a companion OCR
+ *  plugin) and PDFs (via Obsidian's bundled pdf.js). */
 const DOC_IMG_EXTS = new Set(["png", "jpg", "jpeg", "webp", "bmp", "gif"]);
 const isDocExt = (e: string) => e.toLowerCase() === "pdf" || DOC_IMG_EXTS.has(e.toLowerCase());
+
+/** The companion plugins that can read text out of an image, best first. Both
+ *  expose the same `extractText`, so whichever is installed simply answers. */
+const OCR_PROVIDERS = ["powerextract", "text-extractor"] as const;
 
 /** Settings that must never leave this device via data.json: API keys and
  *  Microsoft 365 tokens live in per-vault localStorage, so a data.json
@@ -4034,11 +4038,17 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 			return out;
 		}
-		const te = (this.app as unknown as { plugins?: { plugins?: Record<string, { api?: { extractText?: (f: TFile) => Promise<string> } }> } })
-			.plugins?.plugins?.["text-extractor"]?.api;
-		if (!te || typeof te.extractText !== "function")
-			throw new Error("Install and enable the Text Extractor plugin to OCR images (PDFs work without it).");
-		return await te.extractText(file);
+		// Whichever OCR companion is installed, best first. Both expose the same
+		// extractText, so which one answers does not matter here; Power Extract
+		// is preferred because it reads through the OCR built into Windows
+		// instead of downloading an engine.
+		const plugins = (this.app as unknown as { plugins?: { plugins?: Record<string, { api?: { extractText?: (f: TFile) => Promise<string> } }> } })
+			.plugins?.plugins;
+		for (const id of OCR_PROVIDERS) {
+			const api = plugins?.[id]?.api;
+			if (api && typeof api.extractText === "function") return await api.extractText(file);
+		}
+		throw new Error("Install and enable the Power Extract plugin to read text out of images (PDFs work without it).");
 	}
 
 	/** OCR → classify and extract fields → file the original into the
@@ -13672,7 +13682,7 @@ class AssistantSettingTab extends PluginSettingTab {
 				t.setPlaceholder("Capture/Notes/People").setValue(s.peopleFolder).onChange((v) => ((s.peopleFolder = cleanFolderPath(v)), save()))
 			);
 		section("Documents", "capture");
-		intro("Right-click an image or PDF and choose Process document: its text is read (Text Extractor OCRs images; PDFs need nothing extra), the vendor, date, amount, and type are extracted, the file is renamed and filed by type and year, and a note with those properties lands beside it.");
+		intro("Right-click an image or PDF and choose Process document: its text is read (Power Extract reads images; PDFs need nothing extra), the vendor, date, amount, and type are extracted, the file is renamed and filed by type and year, and a note with those properties lands beside it.");
 		new Setting(c)
 			.setName("Documents folder")
 			.setDesc("Where processed documents are filed, organized by type and year. Empty leaves files where they are and only writes the note.")
