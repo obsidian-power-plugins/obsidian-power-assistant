@@ -1225,6 +1225,80 @@ button.pcap-recbar-btn {
 	color: var(--text-muted);
 }
 
+/* On Obsidian 1.13 a group hands its heading straight to setText, so the pill
+   cannot ride inside the name; it goes in the header's control slot instead,
+   as an extra button stripped of its button chrome. Same badge, right-aligned. */
+.setting-item-heading > .setting-item-control > .ptc-prov-pill {
+	align-self: center;
+	margin-left: 0;
+	line-height: 1.6;
+	cursor: default;
+}
+
+/* A list that owns its container: one row that refills itself on every render,
+   because the rules, templates, corrections and voices behind these lists all
+   change outside this tab, and 1.13 reopens a page from cached definitions
+   rather than asking for fresh ones.
+
+   It is the box the rows live in, not a row itself, so it has to give back the
+   chrome the theme puts on every .setting-item. The padding is compound because
+   1.13's own `.setting-group .setting-item:not(.setting-item-heading)` outranks
+   a lone class, and without this the rows inside are inset twice over. */
+.setting-group .setting-item.ptc-list-row,
+.ptc-settings-section .setting-item.ptc-list-row {
+	display: block;
+	padding: 0;
+	border: none;
+}
+
+/* `.setting-item > *:first-child` hangs a 16px end margin on the first child of
+   any row, which here is the first item of the list: its buttons sit short of
+   every other row's. Matching that rule's own specificity is not enough, since
+   it is the more specific selector of the two on the same element. */
+.setting-item.ptc-list-row > *:first-child {
+	margin-inline-end: 0;
+}
+
+/* nothing to list is nothing to draw, rather than an empty band under the
+   heading where the rules will eventually go */
+.ptc-list-row:empty {
+	display: none;
+}
+
+/* What this plugin is and which build is running, above the section list. */
+.ptc-about {
+	display: block;
+}
+
+.ptc-about-standalone {
+	padding: 2px 0 12px;
+}
+
+.ptc-about-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.ptc-about-name {
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.ptc-about-version {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	background: var(--background-modifier-hover);
+	border-radius: 4px;
+	padding: 1px 6px;
+}
+
+.ptc-about-desc {
+	margin-top: 4px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
 /* The recognized capture sites. A dozen names inside a sentence is a paragraph
    you have to read; as chips it is a list you scan, which is what the actual
    question ("can I paste this?") needs. Compound selectors throughout: the
@@ -1433,6 +1507,7 @@ button.pcap-recbar-btn {
 }
 .ptc-settings-section > .setting-item-heading,
 .ptc-settings-section > .ptc-section-intro,
+.ptc-settings-section > .ptc-list-row,
 .ptc-settings-section > .setting-item:has(input[type="text"]),
 .ptc-settings-section > .setting-item:has(input[type="password"]),
 .ptc-settings-section > .setting-item:has(input[type="search"]),

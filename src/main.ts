@@ -27,6 +27,10 @@ import {
 	normalizePath,
 	requestUrl,
 	setIcon,
+	type ExtraButtonComponent,
+	type SettingDefinitionItem,
+	type SettingDefinitionPage,
+	type SettingDefinitionRender,
 } from "obsidian";
 import type { Correction, DeepgramResponse, DigestData, EvalScore, ExportModel, Frame, FrameSample, GraphEvent, LiveTurn, ParsedInvite, PersonData, SpeakerEmbedding, TurnEmbedding, TurnRef, UsageEvent, VoiceprintLibrary, WhisperXResponse } from "./pipeline";
 import { fetchCalendar, GraphError, pollToken, refreshTokens, sendMail, startDeviceCode } from "./graph";
@@ -2835,10 +2839,10 @@ export default class PowerAssistantPlugin extends Plugin {
 		s.setupNudged = true;
 		void this.saveSettings();
 		const notice = new Notice("", 20000);
-		notice.noticeEl.createSpan({
+		notice.messageEl.createSpan({
 			text: "Power Assistant is installed but not set up yet. Recording and AI notes need a transcription provider, an AI model, or both. ",
 		});
-		const link = notice.noticeEl.createEl("a", { text: "Open setup", attr: { href: "#" } });
+		const link = notice.messageEl.createEl("a", { text: "Open setup", attr: { href: "#" } });
 		link.addEventListener("click", (e) => {
 			e.preventDefault();
 			notice.hide();
@@ -5384,8 +5388,8 @@ export default class PowerAssistantPlugin extends Plugin {
 		// that starting one by accident must be undoable: the thing telling you it
 		// is running is the thing that stops it, the same gesture as the queue count
 		let canceled = false;
-		progress.noticeEl.addClass("pa-notice-clickable");
-		progress.noticeEl.addEventListener("click", () => {
+		progress.messageEl.addClass("pa-notice-clickable");
+		progress.messageEl.addEventListener("click", () => {
 			canceled = true;
 			progress.setMessage("Power Assistant: stopping the scan…");
 		});
@@ -12423,9 +12427,47 @@ class LinkModal extends Modal {
 	}
 }
 
+/** One row of the settings tab. `build` is handed a Setting whose name and
+ *  description are already set, so it only adds the controls. Rows are data
+ *  rather than drawing code so the two renderers cannot disagree about what
+ *  the tab holds. */
+type Row = {
+	name: string;
+	desc?: string;
+	/** A description read from live state rather than fixed when the row was
+	 *  declared: a running count, a connection, whether a sibling plugin is
+	 *  installed. Both renderers apply it on every render, which is what keeps
+	 *  it honest on 1.13, where reopening a tab redraws from definitions built
+	 *  who knows when. */
+	liveDesc?: () => string;
+	help?: string;
+	cls?: string;
+	aliases?: string[];
+	/** A row that only applies when another setting is set a certain way.
+	 *  Evaluated on every render by both renderers, so reopening the tab is
+	 *  enough to bring it back in step: Obsidian 1.13 rebuilds a page from the
+	 *  cached definitions without asking for new ones. */
+	visible?: () => boolean;
+	build?: (st: Setting) => void | (() => void);
+};
+
+/** The "Key set" / "No key" badge on a provider heading. Every provider group
+ *  is always shown, so this is what makes the tab answer "which of these am I
+ *  actually set up for" without opening each one. */
+type Pill = { id: string; text: () => string; ok: () => boolean };
+
+/** A run of rows under one heading. Each becomes a headed group on 1.13 and
+ *  one foldable section div in the fallback. */
+type Group = { heading: string; pill?: Pill; rows: Row[] };
+
+/** One tab: a native settings page on Obsidian 1.13 and up, a tab button in
+ *  the fallback renderer for older builds. */
+type Page = { id: string; label: string; groups: Group[] };
+
 class AssistantSettingTab extends PluginSettingTab {
-	/** Which settings tab is showing; kept across re-renders. */
-	private activeTab = "transcription";
+	/** Which settings tab is showing; kept across re-renders. Only the fallback
+	 *  renderer has a tab bar: 1.13 navigates its own pages. */
+	private activeTab = "setup";
 	/** Current search filter; when set, matching settings show across all tabs. */
 	private query = "";
 	/** The one open help popover, if any, and the icon it hangs from. */
@@ -12433,18 +12475,57 @@ class AssistantSettingTab extends PluginSettingTab {
 	private helpAnchor: HTMLElement | null = null;
 	private helpPinned = false;
 	private helpCleanup: (() => void) | null = null;
+	/** Controls that repaint themselves in place rather than through refresh(),
+	 *  which would tear down the row you are typing into and take the caret with
+	 *  it. Keyed, so a re-render replaces its own entry instead of stacking a
+	 *  second one, and dropped once the element it paints has left the document. */
+	private live = new Map<string, { el: HTMLElement; paint: () => void }>();
+
 	constructor(app: App, private plugin: PowerAssistantPlugin) {
 		super(app, plugin);
+		// Armed once, for the life of the tab. It used to be set in display() and
+		// cleared in hide(), which the declarative renderer would leave null after
+		// the first close, since it never calls display() again. refresh() bails
+		// when the tab is off screen, so a closed tab still costs nothing.
+		plugin.refreshSettingsTab = () => this.refresh();
 	}
 
-	/** Land the next render on the given tab; how a notice jumps to Connect. */
+	/** Land the next render on the given tab; how a notice jumps to Setup.
+	 *  Obsidian 1.13 opens its own page list instead, where Setup is the first
+	 *  entry, so this only steers the fallback renderer. */
 	showTab(id: string) {
 		this.activeTab = id;
 	}
 
 	hide() {
-		this.plugin.refreshSettingsTab = null;
 		this.closeHelp();
+	}
+
+	private save() {
+		void this.plugin.saveSettings();
+	}
+
+	/** Register a control that paints itself from live state, and paint it now.
+	 *  The id is what makes this safe across redraws: the same row registering
+	 *  again replaces the entry rather than leaving a closure pointing at DOM
+	 *  that is no longer on screen. */
+	private setLive(id: string, el: HTMLElement, paint: () => void) {
+		this.live.set(id, { el, paint });
+		paint();
+	}
+
+	private repaint(id: string) {
+		const e = this.live.get(id);
+		if (!e) return;
+		if (e.el.isConnected) e.paint();
+		else this.live.delete(id);
+	}
+
+	/** Every per-capture provider pick at once. Each option says whether that
+	 *  provider has a key, and the keys live on the Setup tab, so the answer
+	 *  changes on a page these dropdowns cannot see. */
+	private repaintPicks() {
+		for (const id of [...this.live.keys()]) if (id.startsWith("pick:")) this.repaint(id);
 	}
 
 	private closeHelp() {
@@ -12492,29 +12573,188 @@ class AssistantSettingTab extends PluginSettingTab {
 		};
 	}
 
+	/** Redraw when the rows themselves change: a filing rule added, voice
+	 *  identity turned on, a template deleted. Obsidian 1.13 rebuilds the tab
+	 *  from getSettingDefinitions(); older builds have only the fallback
+	 *  renderer.
+	 *
+	 *  The plugin calls this from everywhere it changes settings behind the
+	 *  tab's back, so it bails when the tab is off screen rather than rebuilding
+	 *  a hidden container. */
+	private refresh() {
+		if (!this.containerEl.isShown()) return;
+		this.closeHelp(); // whatever the popover is anchored to is about to go
+		// update() arrived with the declarative API in 1.13 and minAppVersion is
+		// still 1.8.7, so it is reached through a cast rather than named outright:
+		// an older build has no definitions to rebuild from and redraws instead.
+		const tab = this as unknown as { update?: () => void };
+		if (tab.update) tab.update();
+		else this.renderFallback();
+	}
+
+	/** Hover shows the popover, a click pins it open so the one-line description
+	 *  stays scannable. No aria-label on the icon, or Obsidian's native black
+	 *  tooltip doubles up with it. */
+	private wireHelp(ic: HTMLElement, text: string) {
+		ic.addEventListener("mouseenter", () => this.openHelp(ic, text, false));
+		ic.addEventListener("mouseleave", () => {
+			if (!this.helpPinned && this.helpAnchor === ic) this.closeHelp();
+		});
+		ic.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (this.helpPinned && this.helpAnchor === ic) this.closeHelp();
+			else this.openHelp(ic, text, true);
+		});
+	}
+
+	/** The small help icon that follows a setting's name, carrying the deeper
+	 *  "what does this actually do" explanation. */
+	private addHelp(st: Setting, text: string) {
+		const ic = st.nameEl.createSpan({ cls: "ptc-setting-help" });
+		setIcon(ic, "help-circle");
+		this.wireHelp(ic, text);
+	}
+
+	/** The red "this throws something away" button. setDestructive arrived with
+	 *  1.13 and minAppVersion is still 1.8.7, so it is reached through a cast
+	 *  rather than named outright, which doubles as the check for an older
+	 *  build: those still have setWarning, which is what it replaced. */
+	private destructive(b: ButtonComponent) {
+		const btn = b as unknown as { setDestructive?: () => void; setWarning: () => void };
+		if (btn.setDestructive) btn.setDestructive();
+		else btn.setWarning();
+		return b;
+	}
+
+	/** What this plugin is and which build is running, above the section list.
+	 *  Read off the manifest so it cannot drift from the released version. */
+	private renderAbout(el: HTMLElement) {
+		el.addClass("ptc-about");
+		const head = el.createDiv({ cls: "ptc-about-head" });
+		head.createSpan({ cls: "ptc-about-name", text: this.plugin.manifest.name });
+		head.createSpan({ cls: "ptc-about-version", text: "v" + this.plugin.manifest.version });
+		el.createDiv({ cls: "ptc-about-desc", text: this.plugin.manifest.description });
+	}
+
+	private paintPill(el: HTMLElement, p: Pill) {
+		this.setLive("pill:" + p.id, el, () => {
+			const ok = p.ok();
+			el.setText(p.text());
+			el.toggleClass("is-set", ok);
+			el.toggleClass("is-unset", !ok);
+		});
+	}
+
+	/** Obsidian 1.13 and up builds the tab from these and never calls display():
+	 *  one native page per tab, standing in for the tab bar the fallback draws
+	 *  for older builds, and a headed group per section.
+	 *
+	 *  Every row renders itself rather than declaring a `control`. A declarative
+	 *  control writes through Obsidian's generic setControlValue, which would
+	 *  bypass saveSettings and everything these rows do on the way (re-indexing,
+	 *  repainting the ribbon, restating the queue). */
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const pages = this.buildPages();
+		const rowsOf = new Map(pages.map((p) => [p.label, p.groups.flatMap((g) => g.rows)] as const));
+		return [
+			{
+				name: "",
+				searchable: false, // it is a masthead, not a setting
+				render: (st) => {
+					st.settingEl.empty();
+					this.renderAbout(st.settingEl);
+				},
+			},
+			{
+				type: "group",
+				search: {
+					placeholder: "Search settings...",
+					// the entries here are whole tabs, so a tab stays up when anything
+					// inside it matches. Obsidian's own search box, top left, reaches
+					// the individual settings.
+					match: (def, query) => {
+						const q = query.trim().toLowerCase();
+						if (!q) return true;
+						const has = (v: string | undefined) => (v ?? "").toLowerCase().includes(q);
+						return (rowsOf.get(def.name) ?? []).some(
+							(r) => has(r.name) || has(r.desc) || (r.aliases ?? []).some(has)
+						);
+					},
+				},
+				items: pages.map(
+					(p): SettingDefinitionPage => ({
+						type: "page",
+						name: p.label,
+						items: p.groups.map((g) => ({
+							type: "group" as const,
+							heading: g.heading,
+							// the provider badge, on the header rather than on any one row
+							// beneath it. A declarative group hands its heading text to
+							// setText, so an extra button is the only thing that can ride
+							// there; strip the button chrome and it is the same pill.
+							extraButtons: g.pill
+								? [
+										(b: ExtraButtonComponent) => {
+											const el = b.extraSettingsEl;
+											el.removeClasses(["clickable-icon", "extra-setting-button"]);
+											el.addClass("ptc-prov-pill");
+											el.setAttr("tabIndex", -1); // a badge, not a control
+											if (g.pill) this.paintPill(el, g.pill);
+										},
+									]
+								: undefined,
+							items: g.rows.map((r) => this.toDefinition(r, p.label)),
+						})),
+					})
+				),
+			},
+		];
+	}
+
+	/** One row as a definition Obsidian can draw. The name and description are
+	 *  its to render and it rebuilds both on a redraw, so a row only hands back
+	 *  what it hung on the row element itself. */
+	private toDefinition(r: Row, page: string): SettingDefinitionRender {
+		return {
+			// a live description is still worth indexing, so search gets whatever
+			// it reads right now; the render below keeps the drawn one current
+			name: r.name,
+			desc: r.desc ?? r.liveDesc?.(),
+			// searching the tab name still finds its rows, the way a heading match
+			// opened the whole section in the tab bar
+			aliases: [...(r.aliases ?? []), page],
+			visible: r.visible,
+			render: (st) => {
+				if (r.cls) st.settingEl.addClass(r.cls);
+				if (r.liveDesc) st.setDesc(r.liveDesc());
+				const teardown = r.build?.(st);
+				if (r.help) this.addHelp(st, r.help);
+				return teardown;
+			},
+		};
+	}
+
+	/** The pre-1.13 renderer: every section on one page, with a tab bar, a
+	 *  search box, and foldable headings of our own because there was no
+	 *  declarative API to hand the work to. Obsidian 1.13 and up ignores this
+	 *  and renders the definitions above instead, so the two only ever differ in
+	 *  how they draw, never in what they draw. */
 	display() {
+		this.renderFallback();
+	}
+
+	private renderFallback() {
 		const root = this.containerEl;
 		root.empty();
 		this.closeHelp(); // a re-render orphans any popover anchored to the old DOM
-		const s = this.plugin.settings;
-		const save = () => void this.plugin.saveSettings();
-		this.plugin.refreshSettingsTab = () => this.display();
 
-		// grouped by what a person is trying to do, not by which feature grew
-		// first: mail lives with mail, capture with capture, and the provider
-		// keys stay together in one place you visit once
-		const TABS: { id: string; label: string }[] = [
-			{ id: "setup", label: "Setup" },
-			{ id: "audio", label: "Audio" },
-			{ id: "meetings", label: "Meetings" },
-			{ id: "capture", label: "Capture" },
-			{ id: "mail", label: "Mail" },
-			{ id: "spending", label: "Spending" },
-			{ id: "search", label: "Search" },
-			{ id: "notes", label: "Notes" },
-			{ id: "privacy", label: "Privacy" },
-		];
-		if (!TABS.some((t) => t.id === this.activeTab)) this.activeTab = TABS[0].id;
+		const pages = this.buildPages();
+		if (!pages.some((p) => p.id === this.activeTab)) this.activeTab = pages[0].id;
+
+		// the same masthead the declarative tab shows, minus the setting-item
+		// wrapper it gets there
+		this.renderAbout(root.createDiv({ cls: "ptc-about-standalone" }));
 
 		const searchWrap = root.createDiv({ cls: "ptc-settings-search" });
 		const searchInput = searchWrap.createEl("input", { cls: "ptc-settings-search-input" });
@@ -12525,1707 +12765,49 @@ class AssistantSettingTab extends PluginSettingTab {
 		const tabBar = root.createDiv({ cls: "ptc-settings-tabs" });
 		const body = root.createDiv({ cls: "ptc-settings-body" });
 
-		// each heading opens a section div tagged with its tab; the settings that
-		// follow render into it because c points at the current section
-		let c: HTMLElement = body;
 		// open by default: a settings page exists to be changed, and a fold that
 		// hides everything until clicked costs more than the scrolling it saves.
-		// Folding stays available for a section someone is done with.
+		// Folding stays available for a section someone is done with. It belongs
+		// to this renderer alone; 1.13 gives each tab its own page, which is what
+		// the fold was standing in for.
 		const isExpanded = (name: string, tab: string) => !this.plugin.settings.foldedSections.includes(`${tab}/${name}`);
 
-		const section = (name: string, tab: string) => {
-			c = body.createDiv({ cls: "ptc-settings-section" });
-			c.dataset.tab = tab;
-			c.dataset.name = name.toLowerCase();
-			const head = new Setting(c).setName(name).setHeading();
-			head.settingEl.addClass("ptc-section-head");
-			head.settingEl.addEventListener("click", () => {
-				const key = `${tab}/${name.toLowerCase()}`;
-				const folded = this.plugin.settings.foldedSections;
-				const at = folded.indexOf(key);
-				if (at >= 0) folded.splice(at, 1);
-				else folded.push(key);
-				void this.plugin.saveSettings();
-				applyView();
-			});
-			return head;
-		};
-
-		// A section's opening paragraph, built as a real Setting rather than a bare
-		// <p>: the theme cards every .setting-item, so loose text floats outside
-		// the boxes and breaks the column the rest of the rows line up on.
-		const intro = (text: string) => new Setting(c).setDesc(text).setClass("ptc-section-intro");
-
-		// A key-set / no-key pill on a provider heading, so the provider list
-		// answers "which of these am I actually set up for" at a glance. Repainted
-		// in place rather than via display(), which would steal focus mid-key.
-		const pill = (head: Setting, ready: () => boolean) => {
-			const el = head.nameEl.createSpan({ cls: "ptc-prov-pill" });
-			const paint = () => {
-				const ok = ready();
-				el.setText(ok ? "Key set" : "No key");
-				el.toggleClass("is-set", ok);
-				el.toggleClass("is-unset", !ok);
-			};
-			paint();
-			return paint;
-		};
-
-		// A per-capture provider choice. Each option says whether that provider
-		// actually has a key, so the pick is informed by what is set up rather
-		// than by memory, and "Use the default" keeps one lever for everything
-		// that does not need its own answer. The keys live on another tab and
-		// switching tabs does not re-render, so every pick can be repainted when
-		// a key or the default changes; otherwise "(no key)" would go stale.
-		const providerPicks: (() => void)[] = [];
-		const refreshPicks = () => providerPicks.forEach((f) => f());
-		const providerPick = (name: string, desc: string, get: () => ProviderChoice, set: (v: ProviderChoice) => void, helpText: string) => {
-			const label = (p: TranscriptionProvider, base: string) => `${base}${this.plugin.providerReady(p) ? "" : p === "whisperx" ? " (no server)" : " (no key)"}`;
-			new Setting(c)
-				.setName(name)
-				.setDesc(desc)
-				.then((st) => help(st, helpText))
-				.addDropdown((d) => {
-					const paint = () => {
-						d.selectEl.empty();
-						d.addOptions({
-							default: `Use the default (${s.transcriptionProvider})`,
-							whisper: label("whisper", "Whisper"),
-							assemblyai: label("assemblyai", "AssemblyAI (speaker labels)"),
-							deepgram: label("deepgram", "Deepgram (speaker labels)"),
-							whisperx: label("whisperx", "WhisperX (speaker labels, local)"),
-						});
-						d.setValue(get());
-					};
-					paint();
-					providerPicks.push(paint);
-					d.onChange((v) => (set(v as ProviderChoice), save()));
+		// one section div per group, tagged with its tab so the tab bar and the
+		// search box below can show and hide whole sections at a time
+		for (const p of pages) {
+			for (const g of p.groups) {
+				const sec = body.createDiv({ cls: "ptc-settings-section" });
+				sec.dataset.tab = p.id;
+				sec.dataset.name = g.heading.toLowerCase();
+				const head = new Setting(sec).setName(g.heading).setHeading();
+				head.settingEl.addClass("ptc-section-head");
+				head.settingEl.addEventListener("click", () => {
+					const key = `${p.id}/${g.heading.toLowerCase()}`;
+					const folded = this.plugin.settings.foldedSections;
+					const at = folded.indexOf(key);
+					if (at >= 0) folded.splice(at, 1);
+					else folded.push(key);
+					this.save();
+					applyView();
 				});
-		};
-
-		// a small help icon after the setting name carrying the deeper "what does
-		// this actually do" explanation; hover shows it, a click pins it open. No
-		// aria-label on the icon or Obsidian's native black tooltip doubles up.
-		const help = (st: Setting, text: string) => {
-			const ic = st.nameEl.createSpan({ cls: "ptc-setting-help" });
-			setIcon(ic, "help-circle");
-			ic.addEventListener("mouseenter", () => this.openHelp(ic, text, false));
-			ic.addEventListener("mouseleave", () => {
-				if (!this.helpPinned && this.helpAnchor === ic) this.closeHelp();
-			});
-			ic.addEventListener("click", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				if (this.helpPinned && this.helpAnchor === ic) this.closeHelp();
-				else this.openHelp(ic, text, true);
-			});
-		};
-
-		// deeper explanation for each extraction section, shared by the meeting
-		// and YouTube section checklists
-		const SECTION_HELP: Record<string, string> = {
-			summary: "A short prose recap at the top of the note, so you get the gist without reading the whole transcript. It draws only on what was actually said.",
-			takeaways: "The main arguments and conclusions as bullets, focused on the ideas rather than raw numbers (those go to Facts & figures, so the two do not repeat). Best for talks and videos.",
-			facts: "Concrete facts, statistics, and figures quoted as they were stated. It never calculates or estimates a number that was not actually said, so a percentage or total appears only if the source gave it.",
-			resources: "External tools, papers, posts, people, products, and links that were referenced, each with a few words on what it is. On-screen visuals do not count, only things actually mentioned.",
-			quotes: "A few memorable or important lines reproduced word-for-word in quotation marks, ready to pull out or cite.",
-			actions: "The to-dos: who does what by when. Whether they render as a checklist or a table is set by 'Action items as tasks'. Owners and dates are filled only when the source states them.",
-			decisions: "The confirmed choices and the reasoning behind them, so you can see not just what was decided but why. Suited to meetings more than videos.",
-			risks: "Issues, dependencies, and open risks raised in the discussion, gathered in one place so nothing important slips.",
-			questions: "Open questions and follow-ups that were left unresolved, so they can be chased later. The morning briefing can also surface recent ones.",
-			keywords: "A single comma-separated line of the main topics, handy as tags or for search. It stays to one line rather than a long list.",
-		};
-
-		section("Transcription", "audio");
-		new Setting(c)
-			.setName("Default provider")
-			.setDesc("Used by anything that has not been given its own provider. Whisper is the cheapest but has no speaker labels. AssemblyAI and Deepgram both add them. Check each provider's own site for current rates.")
-			.then((s) =>
-				help(
-					s,
-					"Whisper returns one unlabeled block of text, so it cannot tell who said what. AssemblyAI and Deepgram diarize, tagging each turn Speaker A, Speaker B, and so on, which is what powers naming the speakers and the per-person talk-time shares. Meetings, Capture, and YouTube can each pick their own provider on their own tab; whatever they leave on Use the default lands here. Keys for every provider live on the API keys tab."
-				)
-			)
-			.addDropdown((d) =>
-				d
-					.addOptions({
-						whisper: "Whisper (OpenAI-compatible)",
-						assemblyai: "AssemblyAI (speaker labels)",
-						deepgram: "Deepgram (speaker labels)",
-						whisperx: "WhisperX (speaker labels, your own server)",
-					})
-					.setValue(s.transcriptionProvider)
-					.onChange((v) => ((s.transcriptionProvider = v as TranscriptionProvider), save(), refreshPicks()))
-			);
-
-		// Where the AI calls go, ahead of the per-provider key groups: the
-		// provider choice decides which of those groups is actually in play.
-		const llmHead = section("AI model", "setup");
-		const llmPillEl = llmHead.nameEl.createSpan({ cls: "ptc-prov-pill" });
-		const llmPill = () => {
-			const ready = llmConfigured(s);
-			llmPillEl.setText(ready ? "Ready" : "Not set");
-			llmPillEl.toggleClass("is-set", ready);
-			llmPillEl.toggleClass("is-unset", !ready);
-		};
-		llmPill();
-		intro(
-			"Which server writes the notes and answers questions: Anthropic's cloud (the default), or a custom endpoint speaking the Anthropic Messages API, such as Ollama, LM Studio, or llama.cpp on your own machine or LAN. Transcription and embeddings have their own endpoints and are unaffected."
-		);
-		new Setting(c)
-			.setName("Provider")
-			.setDesc("Custom endpoint keeps every AI feature on a server you run. The Anthropic key below stays put for switching back.")
-			.then((st) =>
-				help(
-					st,
-					"Every AI call (summaries, chat, the writer, slide reading) goes to one place. Anthropic (cloud) uses the key and model below. Custom endpoint sends the identical calls to a server you run instead: Ollama 0.14 and later, LM Studio, and llama.cpp all speak the Anthropic Messages API. Reading slide images needs a vision-capable model on that server; without one, deck capture still saves the slide text. The usage meter keeps counting tokens either way and prices custom-endpoint calls at $0.00."
-				)
-			)
-			.addDropdown((d) =>
-				d
-					.addOptions({ anthropic: "Anthropic (cloud)", custom: "Custom endpoint (local or LAN)" })
-					.setValue(s.llmProvider)
-					.onChange((v) => {
-						s.llmProvider = v as LlmProvider;
-						save();
-						llmPill();
-						paintCustom();
-					})
-			);
-		new Setting(c)
-			.setName("Detect local AI on this machine")
-			.setDesc("Probes this computer for Ollama (port 11434) and the WhisperX server (port 8571) and fills in their addresses for the whole fleet.")
-			.then((st) =>
-				help(
-					st,
-					"Detection fills endpoints with this machine's network address rather than localhost, so the setting is useful on every synced device at once. It never switches the provider by itself: the dropdown above stays the explicit choice of where the AI runs. Run it on the machine where Ollama or the WhisperX server actually live."
-				)
-			)
-			.addButton((b) => b.setButtonText("Detect").onClick(() => void this.plugin.detectLocalAi()));
-		// the three custom fields only matter for the custom provider, so they
-		// fold away rather than sit there implying they are always read
-		const customBox = c.createDiv();
-		const paintCustom = () => (customBox.style.display = s.llmProvider === "custom" ? "" : "none");
-		new Setting(customBox)
-			.setName("Endpoint")
-			.setDesc("The server's base URL. Ollama answers on http://localhost:11434; use the machine's LAN address when the model runs on another computer.")
-			.then((st) =>
-				help(
-					st,
-					"The base URL every AI call is sent to. Nothing but these calls goes there, and nothing goes to Anthropic while this provider is active. For a server on another machine, use that machine's address and make sure it listens beyond localhost (for Ollama, set OLLAMA_HOST=0.0.0.0)."
-				)
-			)
-			.addText((t) => {
-				t.inputEl.placeholder = "http://localhost:11434";
-				t.setValue(s.llmEndpoint).onChange((v) => ((s.llmEndpoint = v.trim()), save(), llmPill()));
-			});
-		new Setting(customBox)
-			.setName("Model")
-			.setDesc("The model name the server should run, exactly as the server lists it (for example qwen3:30b-a3b on Ollama).")
-			.addText((t) => {
-				t.inputEl.placeholder = "qwen3:30b-a3b";
-				t.setValue(s.llmModel).onChange((v) => ((s.llmModel = v.trim()), save(), llmPill()));
-			});
-		new Setting(customBox)
-			.setName("API key")
-			.setDesc("Only if your server checks one (local servers usually do not).")
-			.addText((t) => {
-				t.inputEl.type = "password";
-				t.setValue(s.llmKey).onChange((v) => ((s.llmKey = v.trim()), save()));
-			});
-		paintCustom();
-
-		// Every key in the plugin lives on this one tab, each provider in its own
-		// group with a pill: which providers you are set up for is a separate
-		// question from which one does which job, and the answer belongs in one
-		// place rather than scattered across the tabs that happen to use them.
-		const anthropicHead = section("Anthropic", "setup");
-		const anthropicPill = pill(anthropicHead, () => !!s.anthropicKey.trim());
-		intro("Writes the notes when the AI model provider is Anthropic (cloud): summaries, action items, and every other extracted section, plus Ask your vault and the assistant chat. Without it you still get transcripts, just no AI-written notes.");
-		new Setting(c)
-			.setName("API key")
-			.setDesc("Used to turn transcripts into structured notes. Leave empty to save transcripts only.")
-			.then((st) =>
-				help(
-					st,
-					"This is the key for the summary, action items, and every other extracted section, plus Ask your vault and the assistant chat. Without it you still get the raw transcript, just no AI-written notes. Stored locally and sent only to Anthropic."
-				)
-			)
-			.addText((t) => {
-				t.inputEl.type = "password";
-				t.setValue(s.anthropicKey).onChange((v) => ((s.anthropicKey = v.trim()), save(), anthropicPill(), llmPill()));
-			});
-		new Setting(c)
-			.setName("Model")
-			.setDesc("claude-haiku-4-5 is the fast, inexpensive default; use claude-opus-4-8 for the highest quality. The AI usage meter shows what this vault is actually spending.")
-			.then((st) =>
-				help(
-					st,
-					"Which Claude model writes the notes. Haiku is fast and cheap and handles most meetings well; Opus is slower and pricier but sharper on long or messy transcripts. The AI usage meter totals what each model has actually cost you."
-				)
-			)
-			.addText((t) => t.setValue(s.anthropicModel).onChange((v) => ((s.anthropicModel = v.trim()), save())));
-
-		const whisperHead = section("Whisper", "setup");
-		const whisperPill = pill(whisperHead, () => !!s.transcriptionKey.trim() || /localhost|127\.0\.0\.1|192\.168\./.test(s.transcriptionEndpoint));
-		intro("Cheapest, and the only one that can run entirely on this machine, but it returns one unlabeled block of text with no speakers.");
-		new Setting(c)
-			.setName("Endpoint")
-			.setDesc("Any OpenAI-compatible base URL: Groq (default), OpenAI (https://api.openai.com/v1), or a self-hosted Whisper server.")
-			.then((st) =>
-				help(
-					st,
-					"The base URL your audio is sent to for transcription; only the /audio/transcriptions path under it is used. Groq hosts Whisper cheaply and is the default. Point it at a server on your own machine to keep audio fully local, in which case no key is needed."
-				)
-			)
-			.addText((t) => t.setValue(s.transcriptionEndpoint).onChange((v) => ((s.transcriptionEndpoint = v.trim()), save(), whisperPill(), refreshPicks())));
-		new Setting(c)
-			.setName("API key")
-			.then((st) => help(st, "The bearer token for the endpoint above. It is stored in this vault's local data file and sent only to that endpoint. Groq and OpenAI both issue keys from their dashboards; a server on your own machine may need none."))
-			.addText((t) => {
-				t.inputEl.type = "password";
-				t.setValue(s.transcriptionKey).onChange((v) => ((s.transcriptionKey = v.trim()), save(), whisperPill(), refreshPicks()));
-			});
-		new Setting(c)
-			.setName("Model")
-			.then((st) => help(st, "The transcription model name the endpoint expects, for example whisper-large-v3 on Groq. Use whatever Whisper model your provider recommends; a name it does not recognize makes it reject the request."))
-			.addText((t) => t.setValue(s.transcriptionModel).onChange((v) => ((s.transcriptionModel = v.trim()), save())));
-
-		const whisperxHead = section("WhisperX", "setup");
-		const whisperxPillEl = whisperxHead.nameEl.createSpan({ cls: "ptc-prov-pill" });
-		const whisperxPill = () => {
-			const ready = !!s.whisperxEndpoint.trim();
-			whisperxPillEl.setText(ready ? "Ready" : "Not set");
-			whisperxPillEl.toggleClass("is-set", ready);
-			whisperxPillEl.toggleClass("is-unset", !ready);
-		};
-		whisperxPill();
-		intro(
-			"Speaker labels from your own machine: a self-hosted WhisperX server transcribes AND diarizes, so meetings get Speaker A/B naming with no cloud provider and no audio leaving your network. The server ships inside the plugin; installing it is one button and one command (a machine with an NVIDIA card is strongly recommended)."
-		);
-		new Setting(c)
-			.setName("Install the server on this machine")
-			.setDesc("Writes the server files out of the plugin and shows the one command that sets everything up (private Python environment, GPU-matched install, start at login).")
-			.then((st) =>
-				help(
-					st,
-					"The plugin never runs installers itself; you see the exact command and run it in your own terminal. The script is safe to rerun any time (to add the Hugging Face token later, or after an update). Run it on the machine that should do the transcribing; every other device just uses the address it prints."
-				)
-			)
-			.addButton((b) => b.setButtonText("Show install steps").setCta().onClick(() => void this.plugin.openServerInstall()));
-		new Setting(c)
-			.setName("Server address")
-			.setDesc("Where the WhisperX server listens, for example http://192.168.1.50:8571. No key; keep it on your own network.")
-			.then((st) =>
-				help(
-					st,
-					"The address of the machine running tools/whisperx-server. Audio is POSTed there and diarized segments come back; nothing else is sent. The address syncs to your other devices, so set it once and the whole fleet knows where the box lives. Check server responds only after the server has loaded its models, which takes a minute after it starts."
-				)
-			)
-			.addText((t) => {
-				t.inputEl.placeholder = "http://192.168.1.50:8571";
-				t.setValue(s.whisperxEndpoint).onChange((v) => ((s.whisperxEndpoint = v.trim()), save(), whisperxPill(), refreshPicks()));
-			})
-			.addButton((b) => b.setButtonText("Check server").onClick(() => void this.plugin.verifyWhisperX()));
-
-		const assemblyHead = section("AssemblyAI", "setup");
-		const assemblyPill = pill(assemblyHead, () => !!s.assemblyaiKey.trim());
-		new Setting(c)
-			.setName("API key")
-			.setDesc("Create a key at assemblyai.com; the same key handles upload, transcription, and speaker diarization. Recording gives Speaker A / Speaker B labels, then a dialog to name them.")
-			.then((st) =>
-				help(
-					st,
-					"One key does the whole job: it uploads the audio, transcribes it, and separates the speakers. Afterward you get a dialog to put real names to Speaker A / Speaker B, which then become attendee links in the note. Test key checks the key without spending credits."
-				)
-			)
-			.addText((t) => {
-				t.inputEl.type = "password";
-				t.setValue(s.assemblyaiKey).onChange((v) => ((s.assemblyaiKey = v.trim()), save(), assemblyPill(), refreshPicks()));
-			})
-			.addButton((b) => b.setButtonText("Test key").onClick(() => void this.plugin.verifyAssemblyKey()));
-
-		const ribbonHead = section("Ribbon icons", "setup");
-		void ribbonHead;
-		const ribbonRow = (name: string, desc: string, get: () => boolean, set: (v: boolean) => void) =>
-			new Setting(c)
-				.setName(name)
-				.setDesc(desc)
-				.addToggle((t) =>
-					t.setValue(get()).onChange((v) => {
-						set(v);
-						save();
-						this.plugin.applyRibbonVisibility();
-					})
-				);
-		ribbonRow("Start recording", "The microphone icon. Its command works either way.", () => s.ribbonRecord, (v) => (s.ribbonRecord = v));
-		ribbonRow("New meeting note", "The calendar icon.", () => s.ribbonMeeting, (v) => (s.ribbonMeeting = v));
-		ribbonRow("Morning briefing", "The sunrise icon.", () => s.ribbonBriefing, (v) => (s.ribbonBriefing = v));
-		ribbonRow("Open the assistant", "The sparkles icon.", () => s.ribbonAssistant, (v) => (s.ribbonAssistant = v));
-
-		const deepgramHead = section("Deepgram", "setup");
-		const deepgramPill = pill(deepgramHead, () => !!s.deepgramKey.trim());
-		new Setting(c)
-			.setName("API key")
-			.setDesc("Create a key at deepgram.com; new accounts start with free credit. Recording gives Speaker A / Speaker B labels, then a dialog to name them.")
-			.then((st) =>
-				help(
-					st,
-					"New accounts start with free credit, which usually makes this the cheapest way to try speaker labels. Like AssemblyAI it diarizes and then prompts you to name the speakers. Test key verifies it without spending credit. Deepgram publishes its current rates on its own site; they are deliberately not repeated here, since a number baked into a plugin goes stale without anyone noticing."
-				)
-			)
-			.addText((t) => {
-				t.inputEl.type = "password";
-				t.setValue(s.deepgramKey).onChange((v) => ((s.deepgramKey = v.trim()), save(), deepgramPill(), refreshPicks()));
-			})
-			.addButton((b) => b.setButtonText("Test key").onClick(() => void this.plugin.verifyDeepgramKey()));
-		new Setting(c)
-			.setName("Model")
-			.setDesc("nova-2 is a good default; nova-3 is the newest.")
-			.then((st) => help(st, "Which Deepgram speech model transcribes your audio. nova-2 is accurate and inexpensive; nova-3 is the latest. Leaving it empty falls back to nova-2. Speaker separation always uses Deepgram's newest diarizer (v2), whichever model is chosen here."))
-			.addText((t) => t.setValue(s.deepgramModel).onChange((v) => ((s.deepgramModel = v.trim() || "nova-2"), save())));
-
-		section("Extraction", "audio");
-		// the Anthropic key and model live on the API keys tab with every other key
-		for (const e of EXTRACTIONS) {
-			new Setting(c)
-				.setName(e.label)
-				.setDesc(e.hint)
-				.then((st) => help(st, SECTION_HELP[e.key] ?? e.hint))
-				.addToggle((t) => t.setValue(s.extractions[e.key]).onChange((v) => ((s.extractions[e.key] = v), save())));
-		}
-		new Setting(c)
-			.setName("Include raw transcript")
-			.setDesc("Append the full transcript to every note for traceability.")
-			.then((s) =>
-				help(
-					s,
-					"Keeps the verbatim transcript under a Transcript heading so you can always check the summary against what was actually said, and re-extract later. Off saves only the AI notes and drops the raw text. A failed extraction still writes the transcript regardless, so nothing is ever lost."
-				)
-			)
-			.addToggle((t) => t.setValue(s.includeTranscript).onChange((v) => ((s.includeTranscript = v), save())));
-
-		section("Meetings", "meetings");
-		providerPick(
-			"Transcription provider",
-			"Which provider transcribes a recording that folds into a meeting note. Meetings usually want speaker labels, so AssemblyAI or Deepgram.",
-			() => s.meetingProvider,
-			(v) => (s.meetingProvider = v),
-			"Only a recording started from a meeting note counts as a meeting here; a standalone recording from the ribbon is treated as a capture and uses the Capture tab's provider. Whisper cannot tell speakers apart, so choosing it here costs you the speaker labels, the naming dialog, and the per-person talk-time shares."
-		);
-		new Setting(c)
-			.setName("Name the speakers")
-			.setDesc("After a diarized transcription, guess who Speaker A/B are from the words themselves; the guesses become one-click suggestions when you name the speakers.")
-			.then((s) =>
-				help(
-					s,
-					"Only works after a diarized transcription (AssemblyAI, Deepgram, or WhisperX). Claude reads the words to guess who each speaker is. With naming set to the transcript, the guesses appear at the top of the label menu as one-click choices; with the dialog, they prefill the form. Off skips the guessing and leaves plain letters either way."
-				)
-			)
-			.addToggle((t) => t.setValue(s.nameSpeakers).onChange((v) => ((s.nameSpeakers = v), save())));
-		new Setting(c)
-			.setName("Name speakers")
-			.setDesc("In the transcript: the note opens with lettered voices, click a turn to hear it and click the letter to tag it (the Otter way). In a dialog: a form asks before the note is written.")
-			.then((st) =>
-				help(
-					st,
-					"Where the letters become people. In the transcript, the finished note opens immediately: click anywhere in a turn to play that voice, then click the letter and pick who it is (the AI guess, the note's attendees, and frequent attendees are one click; Move this turn fixes a single misattributed line). In a dialog, transcription pauses on a form that names every letter up front, with a play button per voice. The Rename speakers command opens that form any time either way."
-				)
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("transcript", "In the transcript")
-					.addOption("dialog", "In a dialog first")
-					.setValue(s.speakerNaming)
-					.onChange((v) => ((s.speakerNaming = v === "dialog" ? "dialog" : "transcript"), save()))
-			);
-		const voiceHead = section("Voice identity", "meetings");
-		const voicePillEl = voiceHead.nameEl.createSpan({ cls: "ptc-prov-pill" });
-		const voicePill = () => {
-			voicePillEl.setText(s.voiceIdentity ? "On" : "Off");
-			voicePillEl.toggleClass("is-set", s.voiceIdentity);
-			voicePillEl.toggleClass("is-unset", !s.voiceIdentity);
-		};
-		voicePill();
-		new Setting(c)
-			.setName("Recognize voices across meetings")
-			.setDesc("Name a speaker once and the voice is remembered; the next recording arrives with that letter already suggesting the name, and a merged speaker is split apart by voice.")
-			.then((st) =>
-				help(
-					st,
-					"A voiceprint is a fingerprint of a voice (a biometric), so this stays off until you turn it on. Prints are computed by your own WhisperX server, stored only in the vault file named below, synced only where your vault syncs, and never sent to any cloud service. Recognition is a suggestion, never an assertion: a matched voice appears at the top of the letter's menu as a one-click choice, exactly like the text guesses. It also audits every diarized cluster turn by turn, so a Speaker 2 that is secretly two people is split before the note is written. Needs WhisperX as the meeting provider and the pyannote/embedding model accepted on the server (see the server README). Forget below truly deletes a voice; deleting the vault file deletes them all."
-				)
-			)
-			.addToggle((t) => t.setValue(s.voiceIdentity).onChange((v) => ((s.voiceIdentity = v), save(), voicePill(), this.display())));
-		if (s.voiceIdentity) {
-			new Setting(c)
-				.setName("Voiceprint file")
-				.setDesc("Where the voice library lives in your vault. It syncs with the vault, so voices named on one device are recognized on the others.")
-				.addText((t) =>
-					t.setValue(s.voiceprintsFile).onChange((v) => ((s.voiceprintsFile = v.trim() || "_resources/voiceprints.json"), save()))
-				);
-			const voicesEl = c.createDiv();
-			void (async () => {
-				const rows = summarizeVoiceprints(await this.plugin.loadVoiceprints());
-				if (!rows.length) {
-					new Setting(voicesEl)
-						.setName("No voices remembered yet")
-						.setDesc("Name a speaker on a WhisperX transcript and that voice is learned from the meeting itself.");
-					return;
+				if (g.pill) this.paintPill(head.nameEl.createSpan({ cls: "ptc-prov-pill" }), g.pill);
+				// name and description first, then the row's own content: the same
+				// order Obsidian applies a definition in, so a row that appends to
+				// either element lands in the same place under both renderers
+				for (const r of g.rows) {
+					if (r.visible && !r.visible()) continue;
+					const st = new Setting(sec).setName(r.name);
+					const desc = r.liveDesc?.() ?? r.desc;
+					if (desc) st.setDesc(desc);
+					if (r.cls) st.settingEl.addClass(r.cls);
+					if (r.aliases?.length) st.settingEl.dataset.ptcAlias = r.aliases.join(" ").toLowerCase();
+					r.build?.(st);
+					if (r.help) this.addHelp(st, r.help);
 				}
-				for (const r of rows) {
-					new Setting(voicesEl)
-						.setName(r.person)
-						.setDesc(`${r.samples} enrollment${r.samples === 1 ? "" : "s"} across ${r.centroids} voice profile${r.centroids === 1 ? "" : "s"} (a headset and a room mic count separately)`)
-						.addButton((b) =>
-							b
-								.setButtonText("Forget")
-								.setWarning()
-								.onClick(async () => {
-									await this.plugin.saveVoiceprints(forgetVoiceprint(await this.plugin.loadVoiceprints(), r.person));
-									new Notice(`Power Assistant: forgot ${r.person}'s voice.`);
-									this.display();
-								})
-						);
-				}
-			})();
-		}
-		new Setting(c)
-			.setName("Action items as tasks")
-			.setDesc("Emit action items as '- [ ] Task [[Owner]] 📅 date' checklist lines (Tasks format), so they appear in todo dashboards with a backlink to the meeting. Off = the classic table.")
-			.then((s) =>
-				help(
-					s,
-					"On, each action becomes a checkbox line with an owner link and a due date, so it shows up in Tasks and to-do dashboards and links back to the meeting. Off lays the actions out as a plain Owner / Task / Deadline table instead. Owners and dates are only filled when the transcript actually states them."
-				)
-			)
-			.addToggle((t) => t.setValue(s.actionsAsTasks).onChange((v) => ((s.actionsAsTasks = v), save())));
-		new Setting(c)
-			.setName("Timestamp each point")
-			.setDesc("End every summary, decision, risk and question with the [m:ss] it came from, so each point clicks back to that moment in the recording.")
-			.then((st) =>
-				help(
-					st,
-					"A summary tells you what was decided; a stamp tells you where to go and hear it, which is what you want when the summary is not quite enough. It also lets a screen be placed beside the point it shows rather than in a gallery at the bottom, so this is worth turning on if you use Screens. The model is told to leave the stamp off rather than guess, so an item it cannot place carries none. Action items and Keywords never take stamps: both have a fixed shape that a trailing stamp would break."
-				)
-			)
-			.addToggle((t) => t.setValue(s.stampSummaries).onChange((v) => ((s.stampSummaries = v), save())));
-		new Setting(c)
-			.setName("Link recurring meetings")
-			.setDesc("When a capture's name matches an earlier one, give the extractor last time's decisions and open items as context, and add a 'Carried over' section for anything still open.")
-			.then((s) =>
-				help(
-					s,
-					"When a new capture's name matches an earlier one (a standing weekly, say), the extractor is handed last time's decisions and still-open items, and the note gets a Carried over section linking anything not yet resolved. The match ignores dates and counters in the name, so 'Weekly sync' lines up across weeks."
-				)
-			)
-			.addToggle((t) => t.setValue(s.seriesAware).onChange((v) => ((s.seriesAware = v), save())));
-		new Setting(c)
-			.setName("Recording panel")
-			.setDesc("Show a sidebar while recording with a running timer, an input-level meter, and a Mark moment button, so capture is always visibly confirmed. On desktop with AssemblyAI it also streams the live transcript; on other providers the full transcript appears after you stop. Purely additive; the recording never depends on it.")
-			.then((s) =>
-				help(
-					s,
-					"The on-page bar that proves the recording is really running: a timer, a moving input-level meter, and a Mark moment button. On desktop with AssemblyAI it also streams the transcript live; other providers show it after you stop. It is only a display, so closing it never affects the recording."
-				)
-			)
-			.addToggle((t) => t.setValue(s.liveTranscript).onChange((v) => ((s.liveTranscript = v), save())));
-		new Setting(c)
-			.setName("Your name")
-			.setDesc('Enables the "Was I mentioned?" quick question, and tags solo voice memos as you.')
-			.then((s) =>
-				help(
-					s,
-					"Lets the plugin tell which voice and which mentions are yours: it powers the 'Was I mentioned?' quick question and tags solo voice memos as spoken by you. Used only for matching; nothing beyond that is written into notes."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Steve").setValue(s.yourName).onChange((v) => ((s.yourName = v.trim()), save())));
-		new Setting(c)
-			.setName("Auto weekly digest")
-			.setDesc("On the first launch of each week, quietly build the meeting digest if the week had meetings. Never steals focus.")
-			.then((s) =>
-				help(
-					s,
-					"At the first launch of a new week, if the previous week had meetings, the digest note (owner task table, decisions, open questions) is built in the background. It never steals focus, and you can always run it by hand from the command palette."
-				)
-			)
-			.addToggle((t) => t.setValue(s.autoWeeklyDigest).onChange((v) => ((s.autoWeeklyDigest = v), save())));
-		const seriesCount = Object.keys(s.seriesTemplates).length;
-		if (seriesCount) {
-			new Setting(c)
-				.setName("Per-series section defaults")
-				.setDesc(`${seriesCount} series remember their own extraction sections. Set these from a recording's Process dialog.`)
-				.then((st) =>
-					help(
-						st,
-						"Some recurring meetings always want the same sections. When you tick 'remember for this series' in a Process dialog, that choice is stored here and reused automatically next time the series comes up. Clear all forgets every remembered series."
-					)
-				)
-				.addButton((b) =>
-					b.setButtonText("Clear all").onClick(() => {
-						s.seriesTemplates = {};
-						save();
-						this.display();
-					})
-				);
-		}
-		new Setting(c)
-			.setName("Rotate recording parts after (minutes)")
-			.setDesc("Long recordings split into parts so transcription size limits never truncate a meeting; parts are transcribed together into one note. 0 turns rotation off.")
-			.then((s) =>
-				help(
-					s,
-					"Long recordings are split into parts of this length so a single file never exceeds a provider's upload size limit and gets cut off; the parts are transcribed and stitched back into one note. 0 turns splitting off. Only matters for very long sessions."
-				)
-			)
-			.addText((t) =>
-				t.setValue(String(s.maxPartMinutes)).onChange((v) => {
-					const n = Math.max(0, Math.floor(Number(v) || 0));
-					s.maxPartMinutes = n;
-					save();
-				})
-			);
-
-		section("Morning briefing", "meetings");
-		new Setting(c)
-			.setName("Auto morning briefing")
-			.setDesc("On the first launch of each day, open a briefing with today's meetings, commitments coming due, documents due soon, and open questions. Also available any time via the sunrise ribbon or the Morning briefing command.")
-			.then((s) =>
-				help(
-					s,
-					"At the first launch each day, a briefing note is built and opened: today's meetings (with a foldable details callout each), your commitments coming due, bills and documents due soon, and recent open questions. It fires once a day; the sunrise ribbon and Morning briefing command run it any time."
-				)
-			)
-			.addToggle((t) => t.setValue(s.autoMorningBriefing).onChange((v) => ((s.autoMorningBriefing = v), save())));
-		new Setting(c)
-			.setName("Briefing horizon (days)")
-			.setDesc("How far ahead a commitment or document counts as coming due in the briefing.")
-			.then((s) =>
-				help(
-					s,
-					"The look-ahead window for the Commitments and Bills sections: a task or document counts as coming due if its date falls within this many days. Anything already overdue always shows regardless. 3 is a sensible default; raise it to see further out."
-				)
-			)
-			.addText((t) =>
-				t
-					.setValue(String(s.briefingHorizonDays))
-					.onChange((v) => ((s.briefingHorizonDays = Math.max(0, Math.min(30, parseInt(v, 10) || 0))), save()))
-			);
-		new Setting(c)
-			.setName("Briefing folder")
-			.setDesc("Where morning briefings are saved. Empty keeps them in a Briefings folder under the output folder. Example: Capture/Notes/Briefings")
-			.then((s) =>
-				help(
-					s,
-					"The folder each day's briefing note is written to, created if missing. Leave it empty to keep the default, a Briefings folder under your output folder. One note is written per day, named by its date."
-				)
-			)
-			.addText((t) =>
-				t.setPlaceholder(`${s.outputFolder}/Briefings`).setValue(s.briefingsFolder).onChange((v) => ((s.briefingsFolder = cleanFolderPath(v)), save()))
-			);
-
-		section("Capture", "audio");
-		providerPick(
-			"Transcription provider",
-			"Which provider transcribes dropped audio and standalone recordings. A solo memo has nothing to diarize, so Whisper is usually enough and costs the least.",
-			() => s.captureProvider,
-			(v) => (s.captureProvider = v),
-			"This covers audio dropped into the capture folder, files you hand-pick to process, and recordings started from the ribbon without a meeting note. If you record a real multi-person meeting this way, Whisper gives you no speaker labels, and recovering them means re-processing the saved audio."
-		);
-		new Setting(c)
-			.setName("Capture system audio")
-			.setDesc("Desktop only: also record what plays through your speakers/headset, so both sides of Teams/Zoom/Meet calls are captured. The recording notice tells you which sources are live.")
-			.then((s) =>
-				help(
-					s,
-					"Records the audio playing through your speakers or headset alongside your microphone, so both sides of a Teams, Zoom, or Meet call are captured, not just you. The recording notice lists which sources are live. Desktop only; ignored on mobile."
-				)
-			)
-			.addToggle((t) => t.setValue(s.captureSystemAudio).onChange((v) => ((s.captureSystemAudio = v), save())));
-		new Setting(c)
-			.setName("Capture folder")
-			.setDesc("Audio dropped or recorded into this folder is processed automatically.")
-			.then((s) =>
-				help(
-					s,
-					"The drop zone for hands-off capture: any audio you record or move into this folder is transcribed and turned into a note without further prompting. Useful for saving a voice memo from your phone and letting it process when it syncs in."
-				)
-			)
-			.addText((t) => t.setValue(s.captureFolder).onChange((v) => ((s.captureFolder = v.trim() || "Capture"), save())));
-		new Setting(c)
-			.setName("Folder for recordings")
-			.setDesc("Empty keeps recordings in the capture folder. When set, recordings land here instead, and the folder is created if missing. Example: _resources/audio")
-			.then((s) =>
-				help(
-					s,
-					"Where the audio files themselves are stored. Empty leaves them in the capture folder; set it to keep recordings out of the way, for example under _resources/audio, created if missing. The notes still land in the output folder either way."
-				)
-			)
-			.addText((t) =>
-				t.setPlaceholder("_resources/audio").setValue(s.audioFolder).onChange((v) => ((s.audioFolder = cleanFolderPath(v)), save()))
-			);
-		new Setting(c)
-			.setName("Output folder")
-			.then((s) => help(s, "Where finished notes are written. Most other features (briefings, people pages, chats) nest under this folder unless you point them somewhere else. Defaults to Capture/Notes."))
-			.addText((t) => t.setValue(s.outputFolder).onChange((v) => ((s.outputFolder = v.trim() || "Capture/Notes"), save())));
-		new Setting(c)
-			.setName("Filename template")
-			.setDesc("{{basename}} = audio filename, {{date}} = today. Extension optional; defaults to .md.")
-			.then((s) =>
-				help(
-					s,
-					"The name pattern for a note made from an audio file. {{basename}} is the audio file's own name and {{date}} is today; for example {{date}} {{basename}} dates each note. Add an extension or it defaults to .md."
-				)
-			)
-			.addText((t) => t.setValue(s.filenameTemplate).onChange((v) => ((s.filenameTemplate = v), save())));
-		section("PowerPoint", "capture");
-		new Setting(c)
-			.setName("Deck notes folder")
-			.setDesc("Where a captured deck's note is written. Empty uses the output folder.")
-			.then((st) =>
-				help(
-					st,
-					"Drop a .pptx onto a note, or run 'Capture a PowerPoint', and the deck is indexed into a note here: a section per slide with its text, its pictures, and the speaker notes. The deck file itself stays where it landed and the note links back to it. The folder is created if it is missing."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Sources/Decks").setValue(s.pptxFolder).onChange((v) => ((s.pptxFolder = cleanFolderPath(v)), save())));
-		new Setting(c)
-			.setName("Read slide images")
-			.setDesc("Whether slide pictures are read for the text in them. Each capture asks, so this is only the starting choice.")
-			.then((st) =>
-				help(
-					st,
-					"Slide text and speaker notes always come through and cost nothing extra. Reading pictures sends them to Claude on your key, which is what catches the words inside charts, diagrams, and screenshots, and it lands in the usage meter. 'Larger images only' is the sensible middle: it keeps the real pictures and drops the bullet icons a deck is littered with. 'Every image' spares nothing, for the rare deck where the small marks matter."
-				)
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("none", "No images, text only")
-					.addOption("large", "Larger images only")
-					.addOption("all", "Every image")
-					.setValue(s.pptxOcr)
-					.onChange((v) => {
-						s.pptxOcr = v as OcrMode;
-						save();
-						this.display();
-					})
-			);
-		if (s.pptxOcr !== "all")
-			new Setting(c)
-				.setName("Smallest picture to keep")
-				.setDesc("Pictures drawn smaller than this on the slide, in inches, are decoration: they are neither kept nor read.")
-				.then((st) =>
-					help(
-						st,
-						"This measures how big a picture is DRAWN on the slide, not how many pixels it holds. Bullet icons routinely ship as 256x256 images and render at a third of an inch, so pixels tell you nothing about the job a picture does. One inch clears the icons and keeps the charts. Raise it if decorative art still lands in the note, lower it if a small chart is being dropped."
-					)
-				)
-				.addText((t) =>
-					t
-						.setPlaceholder("1")
-						.setValue(String(s.pptxMinInches))
-						.onChange((v) => {
-							const n = Number(v.trim());
-							if (Number.isFinite(n) && n >= 0) {
-								s.pptxMinInches = n;
-								save();
-							}
-						})
-				);
-
-		section("Screens", "audio");
-		intro(
-			"A recorded meeting is mostly a shared screen, and the screen is often the point. Turned on, a video capture is walked after its note is written and a frame is kept wherever the picture changed, landing under a Screens heading with the timestamp each one came from. Audio-only captures are unaffected. Run Add screens from a video file to do this to any note by hand, including from a recording that is not in the vault."
-		);
-		new Setting(c)
-			.setName("Screens from a video capture")
-			.setDesc("Scan video captures for the moments the picture changed and add those frames to the note. Off by default: it costs a decode of the whole recording and puts image files in your vault.")
-			.then((st) =>
-				help(
-					st,
-					"Nothing needs installing for this. Obsidian already decodes a video in order to play it, so the frames come from the same decoder, not from ffmpeg. The cost is time and space: roughly a minute of background work per hour of recording, and about a megabyte of images per meeting at the default cap. The per-file dialog has its own toggle, so you can leave this off and still ask for screens on the recordings where the screen mattered."
-				)
-			)
-			.addToggle((t) => t.setValue(s.framesFromVideo).onChange((v) => ((s.framesFromVideo = v), save(), this.display())));
-		if (s.framesFromVideo) {
-			new Setting(c)
-				.setName("Sample every")
-				.setDesc("Seconds between looks at the picture. Smaller catches a screen that was only up briefly and costs one seek per step; an hour at 5 seconds is around 720 of them.")
-				.addText((t) =>
-					t
-						.setPlaceholder("5")
-						.setValue(String(s.frameEvery))
-						.onChange((v) => {
-							const n = Number(v.trim());
-							if (Number.isFinite(n) && n >= 1) {
-								s.frameEvery = Math.round(n);
-								save();
-							}
-						})
-				);
-			new Setting(c)
-				.setName("Change threshold")
-				.setDesc("How much of the picture must change, as a percentage, to count as a new screen.")
-				.then((st) =>
-					help(
-						st,
-						"Each look is compared with the last frame that counted as a change, not with the one before it, so a slow fade cannot creep past this a pixel at a time. 12 percent clears a person shifting in their chair and still catches a slide advancing. Lower it if a screen you wanted was skipped; raise it if you are getting the same screen several times."
-					)
-				)
-				.addText((t) =>
-					t
-						.setPlaceholder("12")
-						.setValue(String(s.frameThreshold))
-						.onChange((v) => {
-							const n = Number(v.trim());
-							if (Number.isFinite(n) && n >= 0 && n <= 100) {
-								s.frameThreshold = n;
-								save();
-							}
-						})
-				);
-			new Setting(c)
-				.setName("Maximum screens")
-				.setDesc("The cap for one recording. When more changes are found than this, the biggest changes are kept and a notice says how many were left out.")
-				.addText((t) =>
-					t
-						.setPlaceholder("12")
-						.setValue(String(s.frameMax))
-						.onChange((v) => {
-							const n = Number(v.trim());
-							if (Number.isFinite(n) && n >= 1) {
-								s.frameMax = Math.round(n);
-								save();
-							}
-						})
-				);
-			new Setting(c)
-				.setName("Read each screen")
-				.setDesc("Have the AI model read every kept frame and quote what it found under the image, so a screen is searchable as text. Costs one image call per frame.")
-				.then((st) =>
-					help(
-						st,
-						"Without this a screen is only a picture: it shows up in the note but no search will ever find it by what it said. Reading them turns each frame into a few lines of quoted text under the image, which is what makes an architecture page or a number on a slide findable later. It is a separate image call per frame, so twelve screens is twelve calls, and it lands in the usage meter with everything else."
-					)
-				)
-				.addToggle((t) => t.setValue(s.frameCaptions).onChange((v) => ((s.frameCaptions = v), save())));
-		}
-
-		section("YouTube", "capture");
-		providerPick(
-			"Transcription provider",
-			"Which provider transcribes a video's audio, when Transcribe the audio below is on. A video is usually one narrator, so Whisper is normally the right call.",
-			() => s.youtubeProvider,
-			(v) => (s.youtubeProvider = v),
-			"Only used when Transcribe the audio is on and the plugin downloads the audio instead of taking the free caption track. Speaker labels rarely matter for a video, so the cheapest provider is usually the right one here."
-		);
-		new Setting(c)
-			.setName("YouTube folder")
-			.setDesc("Where captured YouTube notes are written. Empty uses the output folder.")
-			.then((s) => help(s, "Where notes captured from a YouTube URL are written. Empty uses your main output folder; set it to keep video notes somewhere separate like Personal/YouTube, created if missing."))
-			.addText((t) => t.setPlaceholder("Personal/YouTube").setValue(s.youtubeFolder).onChange((v) => ((s.youtubeFolder = cleanFolderPath(v)), save())));
-		new Setting(c)
-			.setName("YouTube filename")
-			.setDesc("{{title}} = the video title, {{date}} = today. For example {{date}} {{title}} puts the date in front. Extension optional; defaults to .md.")
-			.then((s) => help(s, "The name pattern for a captured video note. {{title}} is the video's title and {{date}} is today, so {{date}} {{title}} dates each one. Add an extension or it defaults to .md."))
-			.addText((t) => t.setPlaceholder("{{title}}").setValue(s.youtubeFilename).onChange((v) => ((s.youtubeFilename = v || "{{title}}"), save())));
-		new Setting(c)
-			.setName("Transcribe the audio")
-			.setDesc("Transcribe the video's actual audio through your transcription provider instead of its auto-captions. More accurate for names and numbers, but it costs transcription credits and downloads the audio. Best-effort: it falls back to captions when the audio cannot be fetched. Off uses the free captions.")
-			.then((s) =>
-				help(
-					s,
-					"On, the video's audio is downloaded and run through your transcription provider, which gets names and numbers right where YouTube's auto-captions mangle them, at the cost of transcription credits and a short download. It quietly falls back to captions if the audio cannot be fetched. Off uses the free captions."
-				)
-			)
-			.addToggle((t) => t.setValue(s.youtubeTranscribeAudio).onChange((v) => ((s.youtubeTranscribeAudio = v), save())));
-		new Setting(c)
-			.setName("YouTube sections")
-			.setDesc("Which sections a captured video's notes include. The defaults are tuned for video content (takeaways, facts, resources, quotes) rather than meeting minutes.")
-			.then((s) =>
-				help(
-					s,
-					"The checklist below picks which sections a captured video's note contains, kept separate from your meeting sections. The defaults lean toward video content (takeaways, facts, resources, quotes) instead of meeting minutes like decisions and action items."
-				)
-			);
-		for (const e of EXTRACTIONS)
-			new Setting(c)
-				.setName(e.label)
-				.setDesc(e.hint)
-				.then((st) => help(st, SECTION_HELP[e.key] ?? e.hint))
-				.addToggle((t) => t.setValue(!!s.youtubeExtractions[e.key]).onChange((v) => ((s.youtubeExtractions[e.key] = v), save())))
-				.setClass("pcap-subsetting");
-		section("Capture from a link", "capture");
-		intro(
-			'Paste a link and Power Assistant decides how to read it: a YouTube video uses its free captions, a video or social post is downloaded and transcribed, and anything else is read as a web page. Downloading needs yt-dlp, a separate free program; install it with "pip install yt-dlp". Reading a web page needs nothing extra.'
-		);
-		// The recognized sites as chips rather than a sentence. The question this
-		// list answers is "can I paste this?", and scanning a name out of a dozen
-		// beats reading a comma list to find it. The lock marks the ones that show
-		// a logged-out visitor nothing, since "supported" and "will work for you"
-		// are different promises for those three.
-		// not ptc-section-intro: that class hides the name, and this row wants one
-		const sitesRow = new Setting(c).setName("Recognized video and social sites")
-			.then((st) => help(st, "The sites a link capture reads as video or a social post rather than an article. Roughly 1,750 more work through Read it as > Video even when they are not listed here. A marked site serves almost nothing to a logged-out visitor, so those need the Cookies from browser setting before a capture will find anything.")).setClass("pcap-sites-row");
-		const chips = sitesRow.descEl.createDiv({ cls: "pcap-site-chips" });
-		for (const m of MEDIA_SITES) {
-			const chip = chips.createSpan({ cls: "pcap-site-chip" });
-			if (m.login) {
-				chip.addClass("is-login");
-				setIcon(chip.createSpan({ cls: "pcap-site-lock" }), "lock");
 			}
-			chip.createSpan({ text: m.label });
-		}
-		chips.createSpan({ cls: "pcap-site-chip is-more", text: "+ ~1,750 more" });
-		sitesRow.descEl.createDiv({
-			cls: "pcap-site-legend",
-			text: "Locked sites show a logged-out visitor almost nothing, so they need Cookies from browser below. Anything not listed is read as a web page; choose Video in the capture dialog to send it to yt-dlp instead.",
-		});
-		new Setting(c)
-			.setName("yt-dlp path")
-			.setDesc("The full path to yt-dlp. Empty searches your PATH and then Python's module form, which is what a pip install usually leaves working. Use Check to see which one answers.")
-			.then((st) =>
-				help(
-					st,
-					"Where to find yt-dlp, the program that downloads a post's audio. Empty is normally right: it tries your PATH first, then runs it through Python, which covers a pip install that put the launcher somewhere PATH does not look. Set a full path only when Check cannot find it. Not needed at all for web pages."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Leave empty to search").setValue(s.ytDlpPath).onChange((v) => ((s.ytDlpPath = v.trim()), save())))
-			.addButton((b) =>
-				b.setButtonText("Check").onClick(async () => {
-					b.setDisabled(true).setButtonText("Checking…");
-					try {
-						new Notice(`Power Assistant: yt-dlp ${await this.plugin.ytDlpVersion()} is working.`, 6000);
-					} catch (e) {
-						new Notice("Power Assistant: " + (e instanceof Error ? e.message : String(e)), 12000);
-					} finally {
-						b.setDisabled(false).setButtonText("Check");
-					}
-				})
-			);
-		{
-			// The one that should be enough: sign in here, in a window, the way
-			// you would sign in anywhere. Everything below it is for the cases
-			// this cannot reach.
-			const row = new Setting(c)
-				.setName("YouTube sign-in")
-				.setDesc("Checking…")
-				.then((st) =>
-					help(
-						st,
-						"YouTube increasingly answers a device it does not recognize with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does not help: a capture goes out from Obsidian and from yt-dlp, and neither can see your browser's cookies. This signs in here instead, and it never asks for your password. Google will not accept one typed into a window inside another app, which is a sensible rule and not one worth dodging, so this uses the flow built for devices in that position: the window opens YouTube's TV interface, you choose Sign in, and it shows a short code. Enter that code at youtube.com/activate in the browser you already trust (the arrow button opens it), approve, and the window is signed in. Then close it. The session is kept in this plugin's own store, separate from the rest of Obsidian, and is never written into your vault or into a note; when a capture needs it, it is handed to yt-dlp as a temporary file deleted the moment the download ends. Sign out clears the whole thing."
-					)
-				);
-			// The label has to agree with the words beside it: a row saying a
-			// session is saved, next to a button saying Sign in, reads as a
-			// contradiction and sends you round the sign-in again for nothing.
-			let signedIn = false;
-			let openBtn: ButtonComponent | null = null;
-			const paint = async () => {
-				const cookies = await this.plugin.youtubeCookies();
-				signedIn = cookies.length > 0;
-				// a count and a way to check, rather than a verdict: whether a
-				// session works is answered by YouTube, and Test YouTube asks it
-				row.setDesc(
-					signedIn
-						? `A YouTube session is saved (${cookies.length} cookies)${hasYoutubeLogin(cookies) ? ", signed in" : ""}. Captures use it. Test says whether it gets through.`
-						: "No session saved. Sign in here if YouTube says a video has no captions, or asks this device to confirm it is not a bot. No password is typed here: YouTube shows a code you approve in your own browser."
-				);
-				openBtn?.setButtonText(signedIn ? "Open YouTube" : "Sign in");
-				openBtn?.setTooltip(signedIn ? "Open the signed-in window again, to check it or switch account" : "Open YouTube's TV interface and pair a code");
-			};
-			void paint();
-			row.addButton((b) =>
-				b.setButtonText("Test").setTooltip("Ask YouTube for one video's title with this session. Downloads nothing.").onClick(async () => {
-					b.setDisabled(true).setButtonText("Testing…");
-					try {
-						const title = await this.plugin.youtubeReach();
-						new Notice(
-							title ? `Power Assistant: YouTube answered, “${title}”. Captures work.` : "Power Assistant: YouTube answered, but said nothing. Try again in a minute.",
-							8000
-						);
-					} catch (e) {
-						const m = e instanceof Error ? e.message : String(e);
-						new Notice(
-							/sign in|not a bot|cookies/i.test(m)
-								? "Power Assistant: YouTube still will not talk to this device" +
-										(signedIn ? ", even with the saved session. Tell Steve, the session works in the window but not for a download." : ". Sign in above.")
-								: "Power Assistant: " + m,
-							15000
-						);
-					} finally {
-						b.setDisabled(false).setButtonText("Test");
-					}
-				})
-			);
-			row.addButton((b) => {
-				openBtn = b;
-				b.setButtonText("Sign in").onClick(async () => {
-					b.setDisabled(true).setButtonText("Waiting…");
-					try {
-						await this.plugin.signInToYoutube();
-					} finally {
-						b.setDisabled(false);
-						void paint();
-					}
-				});
-			});
-			row.addExtraButton((b) =>
-				b
-					.setIcon("external-link")
-					.setTooltip("Open youtube.com/activate in your browser, to enter the code")
-					.onClick(() => window.open("https://www.youtube.com/activate"))
-			);
-			row.addExtraButton((b) =>
-				b
-					.setIcon("log-out")
-					.setTooltip("Sign out and forget the session")
-					.onClick(async () => {
-						await this.plugin.signOutOfYoutube();
-						void paint();
-					})
-			);
-		}
-		new Setting(c)
-			.setName("Cookies from browser")
-			.setDesc(
-				"Only needed for Instagram, Facebook, and LinkedIn, which show almost nothing to a logged-out visitor. Everything else captures fine with this off. On Windows this often fails with Chrome and Edge; see the help."
-			)
-			.then((st) =>
-				help(
-					st,
-					"Off by default, and off means the plugin never touches your browser. Turned on, yt-dlp reads that browser's cookie store at download time so gated sites see you as signed in. Nothing is copied into the vault or into the plugin's settings; the cookies are read per run. Two things to know before turning it on. It applies to every download, not just the gated sites, so your other captures would go out signed in as you when they do not need to be. And on Windows, Chrome and Edge encrypt their cookie stores in a way yt-dlp usually cannot read (Edge reports a DPAPI failure; Chrome also locks its database while it is running), so it may simply not work no matter how it is set. Firefox is the reliable one on Windows."
-				)
-			)
-			.addDropdown((d) => {
-				d.addOptions({ "": "Off", chrome: "Chrome", chromium: "Chromium", edge: "Edge", firefox: "Firefox", brave: "Brave" });
-				d.setValue(s.cookieBrowser).onChange((v) => ((s.cookieBrowser = (COOKIE_BROWSERS.includes(v as CookieBrowser) ? v : "") as CookieBrowser), save()));
-				d.selectEl.addClass("dropdown");
-			});
-		new Setting(c)
-			.setName("Cookies file")
-			.setDesc(
-				"Full path to a cookies.txt exported from your browser. Used ahead of the setting above, and the one that works on Windows where reading Chrome or Edge directly does not. Being signed in to YouTube in your browser does not by itself reach a capture; see the help."
-			)
-			.then((st) =>
-				help(
-					st,
-					"YouTube now answers an unrecognised device with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does NOT fix this: a capture goes out from Obsidian and from yt-dlp, and neither shares your browser's cookie jar, as far as YouTube can tell, they are a stranger. What gets through is handing those programs a copy of the cookies. Reading them straight out of Chrome or Edge fails on Windows (both encrypt the store), so export a cookies.txt with a browser extension and point this at the file, then press Test YouTube. Keep the file outside your vault: it holds live sessions for whatever sites it covers, anyone with it is signed in as you, and a vault that syncs would carry it to every device and to your cloud folder. It is read at download time and never copied into a note or into these settings. Export it from a private window you close afterwards, so ordinary browsing does not rotate the session out from under it, and re-export when captures start failing again."
-				)
-			)
-			.addText((t) => t.setPlaceholder("C:\\Users\\you\\cookies.txt").setValue(s.cookieFile).onChange((v) => ((s.cookieFile = v.trim()), save())));
-		providerPick(
-			"Transcription provider",
-			"Which provider transcribes a video or post's audio. These are usually one voice, so Whisper is normally the right call.",
-			() => s.mediaProvider,
-			(v) => (s.mediaProvider = v),
-			"A social post has no caption track, so this provider is always the one that reads it. Speaker labels rarely matter for a short clip, so the cheapest provider is usually the right one here. Web pages never reach this setting."
-		);
-		new Setting(c)
-			.setName("Video and social folder")
-			.setDesc("Where captured videos and posts are written. {{site}} becomes X, TikTok, Reddit, and so on. Empty uses the output folder.")
-			.then((st) =>
-				help(
-					st,
-					"Where a captured video or post lands. Empty uses your main output folder. {{site}} fills in the source, so Social/{{site}} keeps X and TikTok in their own folders without a settings tab for each. Created if missing."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Sources/Social/{{site}}").setValue(s.mediaFolder).onChange((v) => ((s.mediaFolder = v.trim()), save())));
-		new Setting(c)
-			.setName("Video and social filename")
-			.setDesc("{{title}} = the post's text, {{date}} = today, {{site}} = X, TikTok, and so on. Extension optional; defaults to .md.")
-			.then((st) => help(st, "The name pattern for a captured video or post. {{title}} is the post's own text trimmed to fit a filename, {{date}} is today, and {{site}} is the source. Add an extension or it defaults to .md."))
-			.addText((t) => t.setPlaceholder("{{date}} {{title}}").setValue(s.mediaFilename).onChange((v) => ((s.mediaFilename = v || "{{date}} {{title}}"), save())));
-		new Setting(c)
-			.setName("Video and social sections")
-			.setDesc("Which sections a captured video or post includes. The defaults are tuned for content (takeaways, facts, resources, quotes) rather than meeting minutes. A text-only post takes a shorter list; see the help.")
-			.then((st) =>
-				help(
-					st,
-					"The checklist below picks which sections a captured video or post contains, kept separate from your meeting, YouTube, and web sections. The defaults lean toward content (takeaways, facts, resources, quotes) instead of meeting minutes like decisions and action items. A post with no video is usually a sentence or two, and most of these sections have nothing to work with there, so a text-only post narrows to Summary, Key takeaways, and Keywords: the rest would only write \"None identified\" above the post itself. Switching one of those three off here switches it off there too; nothing is ever turned back on."
-				)
-			);
-		for (const e of EXTRACTIONS)
-			new Setting(c)
-				.setName(e.label)
-				.setDesc(e.hint)
-				.then((st) => help(st, SECTION_HELP[e.key] ?? e.hint))
-				.addToggle((t) => t.setValue(!!s.mediaExtractions[e.key]).onChange((v) => ((s.mediaExtractions[e.key] = v), save())))
-				.setClass("pcap-subsetting");
-		section("Web pages", "capture");
-		intro("Reading a web page costs no transcription: the page is fetched, reduced to its article, converted to Markdown, and extracted like anything else. Only the AI extraction costs anything, and that is optional too.");
-		new Setting(c)
-			.setName("Web folder")
-			.setDesc("Where captured pages are written. One folder is usually right here; see the help for why {{site}} suits social but not the web. Empty uses the output folder.")
-			.then((st) =>
-				help(
-					st,
-					"Where a captured page lands. Empty uses your main output folder. {{site}} works here, but it is rarely what you want: for social it is a dozen tidy labels like X and TikTok, while for a web page it comes from that page's own og:site_name, which is unbounded and often untidy (real examples: \"Wikimedia Foundation, Inc.\", \"Simon Willison's Weblog\"). That means a new folder per publication. One folder reads better, and the site is a property on every note, so a Base can still group by it. Created if missing."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Sources/Articles").setValue(s.webFolder).onChange((v) => ((s.webFolder = v.trim()), save())));
-		new Setting(c)
-			.setName("Web filename")
-			.setDesc("{{title}} = the article's headline, {{date}} = today, {{site}} = the publication. Extension optional; defaults to .md.")
-			.then((st) => help(st, "The name pattern for a captured page. {{title}} is the article's headline, {{date}} is today, and {{site}} is the publication. Add an extension or it defaults to .md."))
-			.addText((t) => t.setPlaceholder("{{date}} {{title}}").setValue(s.webFilename).onChange((v) => ((s.webFilename = v || "{{date}} {{title}}"), save())));
-		new Setting(c)
-			.setName("Keep the article text")
-			.setDesc("Store the full article under an Article heading, below the AI notes. Off keeps only the notes and the link.")
-			.then((st) =>
-				help(
-					st,
-					"On, the whole article is saved into the note so it stays searchable, quotable, and readable after the page changes or disappears. This is separate from the transcript setting on purpose: a transcript is a by-product of transcribing, while an article is the thing itself. Off keeps only the AI sections and the source link."
-				)
-			)
-			.addToggle((t) => t.setValue(s.webIncludeArticle).onChange((v) => ((s.webIncludeArticle = v), save())));
-		new Setting(c)
-			.setName("Web sections")
-			.setDesc("Which sections a captured page includes.")
-			.then((st) => help(st, "The checklist below picks which sections a captured page contains, kept separate from your other capture kinds. The defaults lean toward written content: summary, takeaways, facts, resources, and quotes."));
-		for (const e of EXTRACTIONS)
-			new Setting(c)
-				.setName(e.label)
-				.setDesc(e.hint)
-				.then((st) => help(st, SECTION_HELP[e.key] ?? e.hint))
-				.addToggle((t) => t.setValue(!!s.webExtractions[e.key]).onChange((v) => ((s.webExtractions[e.key] = v), save())))
-				.setClass("pcap-subsetting");
-		section("Meeting notes", "meetings");
-		new Setting(c)
-			.setName("Meetings folder")
-			.setDesc("Where the New meeting note command creates pages. Empty uses the output folder. Created if missing.")
-			.then((s) =>
-				help(
-					s,
-					"Where the New meeting note command (and its ribbon icon) puts the page it creates, so you can prep an agenda before a call and record straight into it. Empty uses the output folder; created if missing."
-				)
-			)
-			.addText((t) =>
-				t.setPlaceholder("Meetings").setValue(s.meetingsFolder).onChange((v) => ((s.meetingsFolder = cleanFolderPath(v)), save()))
-			);
-		new Setting(c)
-			.setName("Ask where a quick recording goes")
-			.setDesc("When a mic-button recording stops, ask whether it becomes a meeting note in the Meetings folder or the usual capture note.")
-			.then((st) =>
-				help(
-					st,
-					"The mic button records without a meeting note, and those recordings normally become capture notes in the output folder. With this on, stopping one asks whether it should instead become a meeting note: filed in the Meetings folder, named by date and title, transcribed by the meeting provider, and eligible for series carry-over. Closing the dialog keeps it a capture, and a recording left unanswered is simply saved (Process pending recordings picks it up). Recordings started from a meeting note never ask; they already have a home."
-				)
-			)
-			.addToggle((t) => t.setValue(s.askQuickFiling).onChange((v) => ((s.askQuickFiling = v), save())));
-		new Setting(c)
-			.setName("Meeting filename")
-			.setDesc("{{date}} = today, {{title}} = what you type. Extension optional; defaults to .md.")
-			.then((s) => help(s, "The name pattern for a page from the New meeting note command. {{date}} is today and {{title}} is what you type in the dialog. Add an extension or it defaults to .md."))
-			.addText((t) => t.setValue(s.meetingFilename).onChange((v) => ((s.meetingFilename = v || "{{date}} {{title}}"), save())));
-		new Setting(c)
-			.setName("Meeting template note")
-			.setDesc("A note in your vault whose body is the template. Its own properties are ignored; the plugin writes the meeting's. Empty uses the box below.")
-			.then((st) =>
-				help(
-					st,
-					"The better place to keep a template, if you already keep them as notes: you write it in the editor with live preview instead of a settings box, it syncs with the vault, and its history is your vault's history. Name any note here and its body becomes what a new meeting note starts with, tokens and all. Whatever properties the template note carries (an icon, a description, the fields some other template tool wants) are ignored: they describe the template, not the meeting, and the plugin writes the meeting's own properties itself. Tokens this plugin does not know are left exactly as they are, so a template shared with another tool keeps that tool's placeholders intact. If the note is renamed or deleted, a new meeting says so once and falls back to the box below rather than failing."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Templates/Meeting Notes").setValue(s.meetingTemplateFile).onChange((v) => ((s.meetingTemplateFile = v.trim()), save())))
-			.addExtraButton((b) =>
-				b
-					.setIcon("search")
-					.setTooltip("Pick a note")
-					.onClick(() =>
-						new NotePickModal(this.app, (f) => {
-							s.meetingTemplateFile = f.path;
-							save();
-							this.display();
-						}).open()
-					)
-			);
-		new Setting(c)
-			.setName("Meeting note template")
-			.setDesc(`What a new meeting note starts with. Tokens: ${MEETING_TOKENS.map((t) => `{{${t.token}}}`).join(", ")}. A line whose tokens are all empty is left out.`)
-			.then((st) =>
-				help(
-					st,
-					"The body of a new meeting note, yours to arrange. The properties above it are not part of this: they are structured fields Obsidian edits in place, and one malformed line in a template would break every note's YAML, so the plugin keeps writing those.\n\n" +
-						MEETING_TOKENS.map((t) => `{{${t.token}}}, ${t.what}`).join("\n") +
-						"\n\nA line that carries tokens and gets nothing back is dropped, label and all: put \"**Where:** {{where}}\" in and a meeting with no location leaves no orphan \"Where:\" behind. A line with no tokens is kept exactly as written, so headings and checklists survive untouched. An unknown token counts as empty, which takes its line with it, worth knowing if a line disappears and you expected it. Empty resets to the default."
-				)
-			)
-			.then((st) => st.settingEl.addClass("pcap-template-item"))
-			.addTextArea((t) => {
-				t.setPlaceholder(DEFAULT_MEETING_TEMPLATE)
-					.setValue(s.meetingTemplate)
-					.onChange((v) => ((s.meetingTemplate = v), save()));
-				t.inputEl.rows = 8;
-				t.inputEl.addClass("pcap-template-area");
-			})
-			.addExtraButton((b) =>
-				b
-					.setIcon("rotate-ccw")
-					.setTooltip("Back to the default template")
-					.onClick(() => {
-						s.meetingTemplate = DEFAULT_MEETING_TEMPLATE;
-						save();
-						this.display();
-					})
-			);
-		new Setting(c)
-			.setName("People folder")
-			.setDesc("Attendee names link into this folder, so clicking one creates the person page there, and person reports are written to it. Empty uses People under the output folder.")
-			.then((s) =>
-				help(
-					s,
-					"Attendee names are linked into this folder, so clicking one opens or creates that person's page here rather than at the vault root, and person reports (their meetings, open items, decisions) are written here too. Empty uses a People folder under the output folder."
-				)
-			)
-			.addText((t) =>
-				t.setPlaceholder("Capture/Notes/People").setValue(s.peopleFolder).onChange((v) => ((s.peopleFolder = cleanFolderPath(v)), save()))
-			);
-		section("Documents", "capture");
-		intro("Right-click an image or PDF and choose Process document: its text is read (Power Extract reads images; PDFs need nothing extra), the vendor, date, amount, and type are extracted, the file is renamed and filed by type and year, and a note with those properties lands beside it.");
-		new Setting(c)
-			.setName("Documents folder")
-			.setDesc("Where processed documents are filed, organized by type and year. Empty leaves files where they are and only writes the note.")
-			.then((s) =>
-				help(
-					s,
-					"The root a processed bill, receipt, or statement is moved into, sorted automatically by type and year (for example Documents/Bills/2026). Empty leaves the original file where it sits and only writes the note beside it. Filing rules below can override this per document."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Documents").setValue(s.docsFolder).onChange((v) => ((s.docsFolder = cleanFolderPath(v)), save())));
-		new Setting(c)
-			.setName("Documents inbox")
-			.setDesc("Watched folder: an image or PDF dropped here is processed and filed automatically. Empty turns the watcher off.")
-			.then((s) =>
-				help(
-					s,
-					"A drop zone for documents: an image or PDF you move here is OCR'd, its vendor, date, amount, and type extracted, and it is filed and noted without a right-click. Empty turns the watcher off so documents are only processed when you ask."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Documents/Inbox").setValue(s.docInbox).onChange((v) => ((s.docInbox = cleanFolderPath(v)), save())));
-
-		new Setting(c)
-			.setName("Filing rules")
-			.setDesc("Route and tag documents by their extracted fields. The first matching rule wins; its folder (with {year}, {type}, {vendor}) overrides the default, and its tags add to the extracted ones. No match keeps filing by type and year.")
-			.then((s) =>
-				help(
-					s,
-					"Rules that route and tag documents by what was extracted, for example send anything from Meralco to Utilities/{year} and tag it electricity. The first matching rule wins; its folder overrides the default and its tags add to the extracted ones. With no match, filing falls back to type and year."
-				)
-			)
-			.addButton((b) =>
-				b.setButtonText("Add rule").setCta().onClick(() => {
-					new DocRuleModal(this.app, {}, (rule) => {
-						s.docRules.push(rule);
-						save();
-						this.display();
-					}).open();
-				})
-			);
-		s.docRules.forEach((rule, i) => {
-			new Setting(c)
-				.setName(docRuleSummary(rule))
-				.then((st) => help(st, "A saved filing rule. Incoming documents are checked against the rules top to bottom and the first match wins; the pencil edits its conditions and destination, the trash removes it."))
-				.addExtraButton((b) => b.setIcon("pencil").setTooltip("Edit").onClick(() => new DocRuleModal(this.app, rule, (edited) => ((s.docRules[i] = edited), save(), this.display())).open()))
-				.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete").onClick(() => ((s.docRules.splice(i, 1)), save(), this.display())));
-		});
-
-		section("Transactions", "spending");
-		intro(
-			"Order confirmations and bills become notes: one per order, plus one per line item so spending reports by category. Power Desk watches your mailboxes and hands matching messages over; the Spending base and rollup read what lands. Amounts are checked against the totals the vendor printed, and anything that does not add up is flagged rather than trusted."
-		);
-		new Setting(c)
-			.setName("Transactions folder")
-			.setDesc("Root for captured orders and line items, each under a year folder. Empty turns transaction capture off.")
-			.then((st) =>
-				help(
-					st,
-					"Where captured purchases live: orders land in <folder>/Orders/<year> and their line items in <folder>/Items/<year>. Line items are separate notes so a mixed order reports correctly by category. Empty turns capture off entirely."
-				)
-			)
-			.addText((t) => t.setPlaceholder("Finance").setValue(s.txnFolder).onChange((v) => ((s.txnFolder = cleanFolderPath(v)), save())));
-		new Setting(c)
-			.setName("Mail rules")
-			.setDesc("Which incoming messages are captured. The first matching rule wins. Match the sender's real domain: bills often arrive from a mailing service rather than the company's own website.")
-			.then((st) =>
-				help(
-					st,
-					"Rules deciding which messages become transactions, checked top to bottom with the first match winning. A rule can also override the vendor name and mark a sender as business spending, which keeps company purchases out of the household rollup."
-				)
-			)
-			.addButton((b) =>
-				b.setButtonText("Add rule").setCta().onClick(() => {
-					new TxnRuleModal(this.app, {}, (rule) => {
-						s.txnRules.push(rule);
-						save();
-						this.display();
-					}).open();
-				})
-			);
-		s.txnRules.forEach((rule, i) => {
-			new Setting(c)
-				.setName(txnRuleSummary(rule))
-				.then((st) => help(st, "A saved mail rule. The pencil edits its conditions and overrides, the trash removes it."))
-				.addExtraButton((b) => b.setIcon("pencil").setTooltip("Edit").onClick(() => new TxnRuleModal(this.app, rule, (edited) => ((s.txnRules[i] = edited), save(), this.display())).open()))
-				.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete").onClick(() => ((s.txnRules.splice(i, 1)), save(), this.display())));
-		});
-		new Setting(c)
-			.setName("Captured messages")
-			.setDesc(`${s.txnSeen.length} message${s.txnSeen.length === 1 ? "" : "s"} already captured and skipped on future scans. Clearing this lets them be captured again.`)
-			.then((st) => help(st, "The ledger of message ids already turned into notes, which is what stops a re-scan from counting the same order twice. Clear it only if you deleted the notes and want them rebuilt."))
-			.addButton((b) => b.setButtonText("Clear").onClick(() => ((s.txnSeen = []), save(), this.display())));
-
-		section("Import a mail folder", "mail");
-		intro(
-			"Turn a folder you already curate (a work folder, a project folder) into notes you can ask questions about. Each back-and-forth becomes ONE note holding the newest message, whose quoted history carries the rest of the thread, so a twenty-message exchange is one note rather than twenty copies of the same text. Run it from the command palette: \"Import a mail folder as notes\"."
-		);
-		new Setting(c)
-			.setName("Folder for imported mail")
-			.setDesc("Each mail folder becomes a subfolder here. Empty turns import off. Point it at a Power Connect encrypted folder to keep work mail encrypted on Dropbox.")
-			.then((st) => help(st, "Imported exchanges land in <folder>/<mail folder name>. A conversation already imported is updated in place as it grows, so an active thread stays one note."))
-			.addText((t) => t.setPlaceholder("Email").setValue(s.mailImportFolder).onChange((v) => ((s.mailImportFolder = cleanFolderPath(v)), save())));
-		new Setting(c)
-			.setName("Only Focused mail")
-			.setDesc("Skip what Outlook classified as Other. That verdict is Microsoft's own, already learned from how you treat your mail, and it costs nothing to use.")
-			.then((st) => help(st, "Outlook's Focused/Other split rides along with every message. An allow rule for a sender overrides this, so a newsletter you actually want is still kept."))
-			.addToggle((t) => t.setValue(s.mailImportFocusedOnly).onChange((v) => ((s.mailImportFocusedOnly = v), save())));
-		new Setting(c)
-			.setName("Skip near-empty exchanges")
-			.then((st) => help(st, "Drops an exchange whose newest message is barely there: a one-word reply, a read receipt, an acknowledgement. These carry no information worth searching and would otherwise sit in the corpus diluting real results. Set it to 0 to keep everything regardless of length."))
-			.setDesc(`Drop an exchange whose newest message is under ${s.mailImportMinChars} characters ("thanks!", read receipts). 0 keeps everything.`)
-			.addSlider((sl) =>
-				sl
-					.setLimits(0, 300, 10)
-					.setValue(s.mailImportMinChars)
-					.setDynamicTooltip()
-					.onChange((v) => ((s.mailImportMinChars = v), save()))
-			);
-		new Setting(c)
-			.setName("Messages read per import")
-			.then((st) => help(st, "How many messages one import reads from a folder before stopping. A bound rather than a target: a folder holding years of mail would otherwise fetch all of it in a single run. Raise it for a deep backfill, then leave it lower for the routine top-ups."))
-			.setDesc(`Read at most ${s.mailImportCap} messages from a folder in one run.`)
-			.addSlider((sl) =>
-				sl
-					.setLimits(100, 5000, 100)
-					.setValue(s.mailImportCap)
-					.setDynamicTooltip()
-					.onChange((v) => ((s.mailImportCap = v), save()))
-			);
-		new Setting(c)
-			.setName("Sender rules")
-			.setDesc("Block a sender to skip it, or allow one to keep it even when Outlook calls it Other. Run \"Scan senders\" on a folder first to see who actually fills it.")
-			.then((st) => help(st, "Matched against the sender's name, address, and domain. A block rule always wins over an allow rule, and an empty rule never matches so it cannot become a catch-all."))
-			.addButton((b) =>
-				b.setButtonText("Add rule").setCta().onClick(() => {
-					s.mailImportRules.push({ match: "", block: true, enabled: true });
-					save();
-					this.display();
-				})
-			);
-		s.mailImportRules.forEach((rule, i) => {
-			new Setting(c)
-				.setName(rule.block ? "Block" : "Allow")
-				.addText((t) =>
-					t
-						.setPlaceholder("name, address, or domain")
-						.setValue(rule.match)
-						.onChange((v) => ((s.mailImportRules[i].match = v.trim()), save()))
-				)
-				.addDropdown((d) =>
-					d
-						.addOptions({ block: "Block", allow: "Allow" })
-						.setValue(rule.block ? "block" : "allow")
-						.onChange((v) => ((s.mailImportRules[i].block = v === "block"), save(), this.display()))
-				)
-				.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete").onClick(() => ((s.mailImportRules.splice(i, 1)), save(), this.display())));
-		});
-
-		section("Ask your email", "mail");
-		intro(
-			"A rolling window of your recent email, indexed locally so “Ask your vault” can answer from it (“what did the electric bill run last month”, “what did Dana send about the contract”). Nothing becomes a note and nothing syncs: the index lives in this plugin's folder and rebuilds from the mailbox. Needs Power Desk with a mailbox connected."
-		);
-		const mailReady = this.plugin.mailFeedAvailable();
-		new Setting(c)
-			.setName("Mail search window (days)")
-			.setDesc(
-				mailReady
-					? "How many days of recent email to keep searchable. 0 turns it off. Larger windows index more mail but cost more memory. The window only reaches as far back as Power Desk has listed, so very old mail may not appear until it is opened."
-					: "Install Power Desk and connect a mailbox to search your email here."
-			)
-			.then((st) => help(st, "The index is keyword search over stripped message text, the same engine Ask uses for notes. Each message contributes its subject, sender, and the head of its body. Turning this to 0 clears it on the next launch."))
-			.addText((t) =>
-				t
-					.setPlaceholder("0")
-					.setValue(String(s.mailWindowDays || ""))
-					.onChange((v) => {
-						const n = parseInt(v, 10);
-						s.mailWindowDays = isFinite(n) && n > 0 ? Math.min(n, 365) : 0;
-						save();
-					})
-			);
-		if (mailReady && s.mailWindowDays > 0) {
-			new Setting(c)
-				.setName("Indexed now")
-			.then((st) => help(st, "How much mail is currently searchable and how far back it reaches. The window only holds what Power Desk has already fetched, so if this looks short, raise Power Desk's mail history and messages-per-folder first, then refresh here."))
-				.setDesc(this.plugin.mailWindowSummary())
-				.addButton((b) => b.setButtonText("Refresh now").onClick(() => void this.plugin.refreshMailWindow().then(() => this.display())));
 		}
 
-		section("AI usage", "privacy");
-		intro("Every Claude call and every stretch of transcription is logged locally, so the usage meter can total what this vault is spending. Nothing leaves your machine: the meter reads that log, not your provider accounts.");
-		new Setting(c)
-			.setName("Log AI usage")
-			.setDesc("Record each AI call so the meter can total it. Turning this off stops logging; whatever is already recorded stays.")
-			.then((st) =>
-				help(
-					st,
-					"Each Claude call logs its model and the token counts the API reports back; each transcription logs its provider and audio length. The meter turns those into an estimated cost and keeps the two apart, because they are two different bills. These are estimates from published rates, not invoices: your billed Claude total lives in the Anthropic Console, and transcription is billed by your provider."
-				)
-			)
-			.addToggle((t) => t.setValue(s.usageMeterEnabled).onChange((v) => ((s.usageMeterEnabled = v), save())));
-		new Setting(c)
-			.setName("Usage meter")
-			.then((st) => help(st, "Opens the running tally of what this vault has spent on AI and transcription, split by feature and provider. These are estimates from published rates rather than invoices: the billed figure lives in your provider's own console, and this is for spotting which feature is costing what."))
-			.setDesc(`Open the meter in the sidebar. ${s.usageLedger.length} call${s.usageLedger.length === 1 ? "" : "s"} recorded so far.`)
-			.addButton((b) => b.setButtonText("Open").setCta().onClick(() => void this.plugin.openUsageMeter()))
-			.addButton((b) =>
-				b
-					.setButtonText("Reset")
-					.setWarning()
-					.onClick(() => {
-						s.usageLedger = [];
-						save();
-						this.display();
-						new Notice("Power Assistant: usage ledger cleared.");
-					})
-			);
-
-		section("Microsoft 365 calendar", "meetings");
-		intro("Import upcoming meetings straight from your Outlook/Teams calendar. Register a free Azure app (Entra ID > App registrations), turn on 'Allow public client flows', add the delegated Calendars.Read permission, and paste its Application (client) ID below. The README has the exact steps. Sign-in tokens are stored locally in this vault.");
-		new Setting(c)
-			.setName("Application (client) ID")
-			.setDesc("From your Azure app registration.")
-			.then((s) =>
-				help(
-					s,
-					"The identifier of the Azure app you register to reach your calendar; paste it from the app's Overview page. The README walks through creating the app (Entra ID, App registrations, allow public client flows, delegated Calendars.Read). It is not a secret, and sign-in tokens are stored only in this vault."
-				)
-			)
-			.addText((t) => t.setPlaceholder("00000000-0000-0000-0000-000000000000").setValue(s.graphClientId).onChange((v) => ((s.graphClientId = v.trim()), save())));
-		new Setting(c)
-			.setName("Tenant")
-			.setDesc(
-				"If your app's Supported account types is 'My organization only' (the registration default), paste the Directory (tenant) ID from the app's Overview page. 'common' only works for apps registered as multi-tenant."
-			)
-			.then((s) =>
-				help(
-					s,
-					"Leave this 'common' only if the app is registered as multi-tenant. If its Supported account types is 'My organization only' (the registration default), 'common' fails sign-in with an AADSTS error and you must paste the Directory (tenant) ID from the app's Overview page here instead."
-				)
-			)
-			.addText((t) => t.setPlaceholder("common").setValue(s.graphTenant).onChange((v) => ((s.graphTenant = v.trim() || "common"), save())));
-		new Setting(c)
-			.setName("Connection")
-			.setDesc(this.plugin.graphConnected() ? "Connected. Run 'Import meeting from calendar' to pick meetings." : "Not connected.")
-			.then((s) =>
-				help(
-					s,
-					"Runs the one-time device-code sign-in: you open a link and type a code in your own browser, so the plugin never sees your password. Once connected, Import meeting from calendar lets you pick meetings to pull in as notes. Disconnect clears the stored tokens."
-				)
-			)
-			.addButton((b) => {
-				if (this.plugin.graphConnected()) b.setButtonText("Disconnect").onClick(() => this.plugin.disconnectGraph());
-				else b.setButtonText("Connect").setCta().onClick(() => void this.plugin.connectGraph());
-			});
-		section("Processing", "audio");
-		new Setting(c)
-			.setName("Process new audio automatically")
-			.then((s) =>
-				help(
-					s,
-					"On, audio that lands in the capture folder is transcribed and turned into a note on its own. Off means nothing happens until you run Process on a file by hand, which is handy when you want to choose the sections or template first."
-				)
-			)
-			.addToggle((t) => t.setValue(s.autoProcess).onChange((v) => ((s.autoProcess = v), save())));
-		new Setting(c)
-			.setName("This device's role")
-			.setDesc("What this device does with new recordings. Per-device (never synced), so a phone can record while a desktop or home server transcribes.")
-			.then((st) =>
-				help(
-					st,
-					"Record and process is the everything device, exactly as before. Record only saves audio and marks it pending; nothing is transcribed on this device (right for phones, tablets, and machines without keys). Processor also watches the vault and claims pending items other devices parked; run it on the machine that holds the keys or the local AI. Queued items show in the status bar, and the command \"Process pending recordings on this device now\" is the manual override from anywhere. Rotated recordings park their part timing in a small .json next to the audio, so a sync service that skips .json files should be set to sync all file types."
-				)
-			)
-			.addDropdown((d) =>
-				d
-					.addOptions({
-						full: "Record and process (default)",
-						capture: "Record only (queue for another device)",
-						processor: "Processor (handles queued items too)",
-					})
-					.setValue(s.deviceRole)
-					.onChange((v) => ((s.deviceRole = v as DeviceRole), save(), this.plugin.paintQueueStatus()))
-			);
-		new Setting(c)
-			.setName("Audio after processing")
-			.setDesc("Keep the recording (embedded in the note), or trash it once the note is written. The transcript is the durable record. Trashing frees space and tightens privacy.")
-			.then((s) =>
-				help(
-					s,
-					"Keep embeds the recording in the note and leaves the file in place. Trash moves it to the system trash (recoverable) once the note is written, since the transcript is the lasting record; it saves space and tightens privacy. Only auto-captured audio is ever trashed, never a file you picked by hand."
-				)
-			)
-			.addDropdown((d) =>
-				d
-					.addOptions({ keep: "Keep the audio", trash: "Move to trash after the note is written" })
-					.setValue(s.audioRetention)
-					.onChange((v) => ((s.audioRetention = v as "keep" | "trash"), save()))
-			);
-
-		section("Custom templates", "audio");
-		new Setting(c).setDesc(
-			"Named section presets that appear in the Process and Re-extract dialogs, alongside the built-ins. Handy for a recurring meeting type that always needs the same sections."
-		);
-		for (const [i, tpl] of s.customTemplates.entries()) {
-			new Setting(c)
-				.setName(tpl.name || "(unnamed)")
-				.setDesc(tpl.sections.length ? tpl.sections.join(", ") : "no sections yet, edit below")
-				.then((st) => help(st, "A saved section preset. It appears in the Process and Re-extract dialogs so you can apply this exact set of sections in one pick; Edit renames it or changes its sections, and the trash removes it."))
-				.addButton((b) =>
-					b
-						.setButtonText("Edit")
-						.onClick(() => new TemplateEditModal(this.app, this.plugin, tpl, () => this.display()).open())
-				)
-				.addExtraButton((b) =>
-					b.setIcon("trash").setTooltip("Delete").onClick(() => {
-						s.customTemplates.splice(i, 1);
-						save();
-						this.display();
-					})
-				);
-		}
-		new Setting(c).addButton((b) =>
-			b.setButtonText("New template").setCta().onClick(() => {
-				const tpl = { name: "New template", sections: ["summary", "actions"] as ExtractionKey[] };
-				s.customTemplates.push(tpl);
-				save();
-				new TemplateEditModal(this.app, this.plugin, tpl, () => this.display()).open();
-			})
-		);
-
-		section("Transcript corrections", "audio");
-		new Setting(c)
-			.setName("How corrections work")
-			.setDesc("Fixes for misheard names, places, and words. Each is applied to every new transcript automatically, so captures get more accurate over time. Add one from any note with the 'Correct a name or term' command (select the wrong text first), or with Add below.")
-			.then((st) =>
-				help(
-					st,
-					"A correction replaces a whole word or name everywhere it appears, so a full invite name like 'Deverakonda Rajasekhar' or a misheard 'Shaker' both become 'Sekhar'. Matching is case-sensitive and whole-word, so a name rule never rewrites an unrelated word. Remove one and new transcripts stop applying it."
-				)
-			);
-		for (const [i, corr] of s.corrections.entries()) {
-			new Setting(c)
-				.setName(`${corr.from}  →  ${corr.to}`)
-				.addExtraButton((b) =>
-					b.setIcon("trash").setTooltip("Remove").onClick(() => {
-						s.corrections.splice(i, 1);
-						save();
-						this.display();
-					})
-				);
-		}
-		new Setting(c).addButton((b) =>
-			b.setButtonText("Add correction").onClick(() =>
-				new CorrectionModal(this.app, "", (fromRaw, toRaw) => {
-					const from = fromRaw.trim();
-					if (!from || from === toRaw.trim()) return;
-					s.corrections = s.corrections.filter((cc) => cc.from !== from);
-					s.corrections.push({ from, to: toRaw });
-					save();
-					this.display();
-				}).open()
-			)
-		);
-
-		section("Sharing & privacy", "privacy");
-		new Setting(c)
-			.setName("Redact sensitive info when sharing")
-			.setDesc("Mask matches when you Copy summary or Export to Word. Never changes the note itself. There's also a one-off 'Copy redacted summary' command.")
-			.then((s) =>
-				help(
-					s,
-					"Masks matches only when you Copy summary or Export to Word, never in the note itself, so the vault keeps the full text while what leaves your machine is scrubbed. Turning it on reveals which categories to mask. There is also a one-off Copy redacted summary command."
-				)
-			)
-			.addToggle((t) => t.setValue(s.redactShare).onChange((v) => ((s.redactShare = v), save(), this.display())));
-		if (s.redactShare) {
-			const cat = (name: string, get: () => boolean, set: (v: boolean) => void, hint: string) =>
-				new Setting(c)
-					.setName(name)
-					.then((st) => help(st, hint))
-					.addToggle((t) => t.setValue(get()).onChange((v) => (set(v), save())));
-			cat("Mask email addresses", () => s.redactEmails, (v) => (s.redactEmails = v), "Replaces anything shaped like an email address with [redacted] in shared copies.");
-			cat("Mask phone numbers", () => s.redactPhones, (v) => (s.redactPhones = v), "Replaces phone-number patterns with [redacted] in shared copies.");
-			cat("Mask SSNs", () => s.redactSsns, (v) => (s.redactSsns = v), "Replaces US Social Security number patterns with [redacted] in shared copies.");
-			cat("Mask card numbers", () => s.redactCards, (v) => (s.redactCards = v), "Replaces long card-number-like digit runs with [redacted] in shared copies.");
-			cat("Mask attendee names", () => s.redactAttendees, (v) => (s.redactAttendees = v), "Replaces the meeting's attendee names with [redacted] in shared copies, header included, so a recap can go out without naming who was there.");
-			new Setting(c)
-				.setName("Also redact these terms")
-				.setDesc("Comma-separated names or words to mask (whole-word, case-insensitive).")
-				.then((s) =>
-					help(
-						s,
-						"Extra names or words to mask, comma-separated, matched whole-word and case-insensitively so a term never clips the middle of another word. Use it for client names, project code names, or anything else specific to you."
-					)
-				)
-				.addText((t) => t.setPlaceholder("Acme, Project X").setValue(s.redactTerms).onChange((v) => ((s.redactTerms = v), save())));
-		}
-
-		section("Ask your vault", "search");
-		new Setting(c)
-			.setName("Folders to index")
-			.setDesc("Comma-separated folders whose notes can be asked about. Use / to index the entire vault; leave empty for just the output folder. Changes re-index automatically.")
-			.then((s) =>
-				help(
-					s,
-					"The folders whose notes Ask your vault and the assistant chat can search, comma-separated. Use / for the whole vault, or leave it empty for just the output folder. The index rebuilds itself as you edit, so changes take effect without a restart."
-				)
-			)
-			.addText((t) =>
-				t.setValue(s.indexFolders).onChange((v) => {
-					s.indexFolders = v;
-					save();
-					void this.plugin.syncIndex(false);
-				})
-			);
-
-		section("Semantic search", "search");
-		intro("Optional: find notes by meaning, not just keywords, by embedding them through an OpenAI-compatible endpoint. Point it at local Ollama (http://localhost:11434/v1, model nomic-embed-text) to keep everything on your machine, or a hosted provider. Leave the endpoint empty to use keyword search only. Ask and the assistant chat blend keyword and meaning when this is on.");
-		new Setting(c)
-			.setName("Embeddings endpoint")
-			.setDesc("OpenAI-compatible base URL. Empty turns semantic search off.")
-			.then((s) =>
-				help(
-					s,
-					"The OpenAI-compatible URL used to turn notes into vectors for meaning-based search. Point it at local Ollama to keep everything on your machine, or a hosted provider. Empty turns semantic search off, and Ask falls back to keyword matching."
-				)
-			)
-			.addText((t) =>
-				t.setPlaceholder("http://localhost:11434/v1").setValue(s.embeddingsEndpoint).onChange((v) => ((s.embeddingsEndpoint = v.trim()), save()))
-			);
-		new Setting(c)
-			.setName("Embeddings API key")
-			.setDesc("Leave empty for local endpoints like Ollama.")
-			.then((s) => help(s, "The key for the embeddings endpoint. Leave it empty for a local server like Ollama that needs none; a hosted provider will require one. Stored locally and sent only to that endpoint."))
-			.addText((t) => t.setValue(s.embeddingsKey).onChange((v) => ((s.embeddingsKey = v.trim()), save())));
-		new Setting(c)
-			.setName("Embeddings model")
-			.setDesc("Changing this rebuilds all embeddings (a different model is a different vector space).")
-			.then((s) =>
-				help(
-					s,
-					"Which embedding model turns your notes into vectors, for example nomic-embed-text on Ollama. Changing it rebuilds every embedding, because a different model produces a different, incompatible vector space."
-				)
-			)
-			.addText((t) => t.setPlaceholder("nomic-embed-text").setValue(s.embeddingsModel).onChange((v) => ((s.embeddingsModel = v.trim() || "nomic-embed-text"), save())));
-		new Setting(c)
-			.setName("Test the endpoint")
-			.setDesc("Embed one sentence and report the vector size. Every failure here is otherwise silent: search just stays keyword-only with no explanation.")
-			.then((st) => help(st, "Sends a single short string to the endpoint and reports what came back. Use it after setting the endpoint or changing the model, before building embeddings over the whole vault."))
-			.addButton((b) => b.setButtonText("Test").onClick(() => void this.plugin.verifyEmbeddings()));
-		new Setting(c)
-			.setName("Build embeddings")
-			.setDesc("Embed the indexed notes now (also runs quietly on launch). Re-run after changing the model.")
-			.then((s) =>
-				help(
-					s,
-					"Embeds your indexed notes right now instead of waiting for the quiet pass that runs on launch. Use it after you first set an endpoint or change the model, so meaning-based search covers everything."
-				)
-			)
-			.addButton((b) =>
-				b.setButtonText("Build now").onClick(() => {
-					if (!this.plugin.semanticEnabled()) {
-						new Notice("Power Assistant: set an embeddings endpoint first.");
-						return;
-					}
-					void this.plugin.syncEmbeddings(true);
-				})
-			);
-
-		section("Last edited, on the page", "notes");
-		// Said up front rather than as a footnote on each row: with Power Editor
-		// installed these three settings change nothing, and a setting that
-		// silently does nothing is worse than one that says why.
-		intro(
-			this.plugin.editedStampMine()
-				? "A quiet \"Edited 3 minutes ago\" line on the note itself, read from the file's own modified time. A note's own `updated:` (or `modified:`) property wins over that where it exists, which matters in a synced vault: the sync client can rewrite a file's modified time when a note arrives from another device and make it look freshly edited."
-				: "Power Editor is installed, and it draws this line, so these settings are not in use here. Power Editor's own copy of them is what to change. They take over again if it is ever removed."
-		);
-		new Setting(c)
-			.setName("Show when the note was last edited")
-			.setDesc("A quiet line under the note's title: “Edited 3 minutes ago”. Click it to swap between the relative time and the exact date.")
-			.addDropdown((d) =>
-				d
-					.addOption("labeled", "Yes, with the word Edited")
-					.addOption("bare", "Yes, just the time")
-					.addOption("off", "Off")
-					.setValue(s.showEdited)
-					.onChange((v) => {
-						s.showEdited = v as PowerAssistantSettings["showEdited"];
-						save();
-						this.plugin.refreshEditedStamps();
-					})
-			)
-			.then((st) =>
-				help(
-					st,
-					"Reads the file's own modified time, so it is right without you maintaining anything. If a note has an `updated:` (or `modified:`) property in its frontmatter, that wins instead, useful in a synced vault, where the sync client can rewrite the file's modified time when a note arrives from another device and make it look freshly edited."
-				)
-			);
-		new Setting(c)
-			.setName("Where to show it")
-			.setDesc("Under the note's title, at the very end of the note, or in both places.")
-			.addDropdown((d) =>
-				d
-					.addOption("title", "Under the title")
-					.addOption("rule", "Under the title, with a line above it")
-					.addOption("bottom", "At the end of the note")
-					.addOption("both", "Both")
-					.setValue(s.editedPosition)
-					.onChange((v) => {
-						s.editedPosition = v as PowerAssistantSettings["editedPosition"];
-						save();
-						this.plugin.refreshEditedStamps();
-					})
-			)
-			.then((st) =>
-				help(
-					st,
-					"Under the title is the Notion habit: you see it as you arrive. The line variant is the same spot pulled tight against the title with a hairline drawn between them, so the title and the date read as one page header instead of as two stray lines above your first paragraph. At the end is closer to 1Password, where the detail sits out of the way until you go looking. Both is fine on long notes, where the title has scrolled away by the time you wonder."
-				)
-			);
-		new Setting(c)
-			.setName("Time format")
-			.setDesc("How the time itself reads.")
-			.addDropdown((d) =>
-				d
-					.addOption("relative", "Relative (3 minutes ago)")
-					.addOption("exact", "Exact date and time")
-					.addOption("both", "Relative, then the exact date")
-					.setValue(s.editedFormat)
-					.onChange((v) => {
-						s.editedFormat = v as PowerAssistantSettings["editedFormat"];
-						save();
-						this.plugin.refreshEditedStamps();
-					})
-			)
-			.then((st) =>
-				help(
-					st,
-					"Relative answers 'is this stale?' at a glance; exact answers 'which version is this?'. Whichever you pick, clicking the stamp shows both for that note until you click it again, and hovering always shows the exact time."
-				)
-			);
-
+		// search filters across every tab; picking a tab shows just its sections
 		const setVisible = (el: HTMLElement, v: boolean) => (el.style.display = v ? "" : "none");
 		const applyView = () => {
 			const q = this.query.trim().toLowerCase();
@@ -14250,7 +12832,7 @@ class AssistantSettingTab extends PluginSettingTab {
 				for (const it of items) {
 					const name = it.querySelector(".setting-item-name")?.textContent?.toLowerCase() ?? "";
 					const desc = it.querySelector(".setting-item-description")?.textContent?.toLowerCase() ?? "";
-					const hit = nameHit || name.includes(q) || desc.includes(q);
+					const hit = nameHit || name.includes(q) || desc.includes(q) || (it.dataset.ptcAlias ?? "").includes(q);
 					setVisible(it, hit);
 					if (hit) anyHit = true;
 				}
@@ -14258,12 +12840,12 @@ class AssistantSettingTab extends PluginSettingTab {
 			}
 		};
 
-		for (const t of TABS) {
-			const btn = tabBar.createEl("button", { text: t.label, cls: "ptc-settings-tab" });
-			btn.toggleClass("is-active", t.id === this.activeTab);
+		for (const p of pages) {
+			const btn = tabBar.createEl("button", { text: p.label, cls: "ptc-settings-tab" });
+			btn.toggleClass("is-active", p.id === this.activeTab);
 			btn.onclick = () => {
-				if (this.activeTab === t.id) return;
-				this.activeTab = t.id;
+				if (this.activeTab === p.id) return;
+				this.activeTab = p.id;
 				for (const other of Array.from(tabBar.children) as HTMLElement[]) other.toggleClass("is-active", other === btn);
 				applyView();
 			};
@@ -14275,5 +12857,1829 @@ class AssistantSettingTab extends PluginSettingTab {
 		});
 
 		applyView();
+	}
+
+	/** Every row of the settings tab, in order, as plain data: the one source
+	 *  both renderers draw from, so they cannot drift apart. Built fresh on each
+	 *  render because several sections list live state (the rules you have
+	 *  written, the templates you have saved, the voices remembered).
+	 *
+	 *  Grouped by what a person is trying to do, not by which feature grew
+	 *  first: mail lives with mail, capture with capture, and the provider keys
+	 *  stay together in one place you visit once. */
+	private buildPages(): Page[] {
+		const s = this.plugin.settings;
+		const save = () => this.save();
+
+		// A Whisper server on your own machine needs no key, so an address that
+		// is plainly local counts as set up on its own.
+		const whisperReady = () => !!s.transcriptionKey.trim() || /localhost|127\.0\.0\.1|192\.168\./.test(s.transcriptionEndpoint);
+
+		// A section's opening paragraph, built as a real Setting rather than a bare
+		// <p>: the theme cards every .setting-item, so loose text floats outside
+		// the boxes and breaks the column the rest of the rows line up on.
+		const intro = (text: string): Row => ({ name: "", desc: text, cls: "ptc-section-intro" });
+
+		// A per-capture provider choice. Each option says whether that provider
+		// actually has a key, so the pick is informed by what is set up rather
+		// than by memory, and "Use the default" keeps one lever for everything
+		// that does not need its own answer. The keys live on another tab, so
+		// every pick repaints itself when a key or the default changes rather
+		// than waiting for a redraw that would leave "(no key)" stale.
+		const providerPick = (id: string, desc: string, get: () => ProviderChoice, set: (v: ProviderChoice) => void, helpText: string): Row => ({
+			name: "Transcription provider",
+			desc,
+			help: helpText,
+			build: (st) => {
+				const label = (p: TranscriptionProvider, base: string) =>
+					`${base}${this.plugin.providerReady(p) ? "" : p === "whisperx" ? " (no server)" : " (no key)"}`;
+				st.addDropdown((d) => {
+					this.setLive("pick:" + id, d.selectEl, () => {
+						d.selectEl.empty();
+						d.addOptions({
+							default: `Use the default (${s.transcriptionProvider})`,
+							whisper: label("whisper", "Whisper"),
+							assemblyai: label("assemblyai", "AssemblyAI (speaker labels)"),
+							deepgram: label("deepgram", "Deepgram (speaker labels)"),
+							whisperx: label("whisperx", "WhisperX (speaker labels, local)"),
+						});
+						d.setValue(get());
+					});
+					d.onChange((v) => (set(v as ProviderChoice), save()));
+				});
+			},
+		});
+
+		// deeper explanation for each extraction section, shared by the meeting
+		// and YouTube section checklists
+		const SECTION_HELP: Record<string, string> = {
+			summary: "A short prose recap at the top of the note, so you get the gist without reading the whole transcript. It draws only on what was actually said.",
+			takeaways: "The main arguments and conclusions as bullets, focused on the ideas rather than raw numbers (those go to Facts & figures, so the two do not repeat). Best for talks and videos.",
+			facts: "Concrete facts, statistics, and figures quoted as they were stated. It never calculates or estimates a number that was not actually said, so a percentage or total appears only if the source gave it.",
+			resources: "External tools, papers, posts, people, products, and links that were referenced, each with a few words on what it is. On-screen visuals do not count, only things actually mentioned.",
+			quotes: "A few memorable or important lines reproduced word-for-word in quotation marks, ready to pull out or cite.",
+			actions: "The to-dos: who does what by when. Whether they render as a checklist or a table is set by 'Action items as tasks'. Owners and dates are filled only when the source states them.",
+			decisions: "The confirmed choices and the reasoning behind them, so you can see not just what was decided but why. Suited to meetings more than videos.",
+			risks: "Issues, dependencies, and open risks raised in the discussion, gathered in one place so nothing important slips.",
+			questions: "Open questions and follow-ups that were left unresolved, so they can be chased later. The morning briefing can also surface recent ones.",
+			keywords: "A single comma-separated line of the main topics, handy as tags or for search. It stays to one line rather than a long list.",
+		};
+
+		// the section checklist, once per capture kind: each kind keeps its own
+		// answers, because a video and a meeting want different notes
+		const extractionRows = (get: (k: ExtractionKey) => boolean, set: (k: ExtractionKey, v: boolean) => void, sub: boolean): Row[] =>
+			EXTRACTIONS.map((e) => ({
+				name: e.label,
+				desc: e.hint,
+				help: SECTION_HELP[e.key] ?? e.hint,
+				cls: sub ? "pcap-subsetting" : undefined,
+				build: (st: Setting) => {
+					st.addToggle((t) => t.setValue(get(e.key)).onChange((v) => (set(e.key, v), save())));
+				},
+			}));
+
+		// A list that is only ever as long as the data behind it: one row that
+		// owns a container and fills it on every render, rather than a row per
+		// item baked into these definitions. Reopening the tab re-runs a row's
+		// render but not this function, so a per-item row would still be showing
+		// the rules you had when you last opened it.
+		const listRow = (aliases: string[], fill: (el: HTMLElement) => void): Row => ({
+			name: "",
+			aliases,
+			cls: "ptc-list-row",
+			build: (st) => {
+				st.settingEl.empty(); // it is a container, not a row with a control
+				fill(st.settingEl);
+			},
+		});
+
+		// ---------------------------------------------------------------- Setup
+
+		const setup: Group[] = [
+			{
+				// Where the AI calls go, ahead of the per-provider key groups: the
+				// provider choice decides which of those groups is actually in play.
+				heading: "AI model",
+				pill: { id: "llm", text: () => (llmConfigured(s) ? "Ready" : "Not set"), ok: () => llmConfigured(s) },
+				rows: [
+					intro(
+						"Which server writes the notes and answers questions: Anthropic's cloud (the default), or a custom endpoint speaking the Anthropic Messages API, such as Ollama, LM Studio, or llama.cpp on your own machine or LAN. Transcription and embeddings have their own endpoints and are unaffected."
+					),
+					{
+						name: "Provider",
+						desc: "Custom endpoint keeps every AI feature on a server you run. The Anthropic key below stays put for switching back.",
+						help: "Every AI call (summaries, chat, the writer, slide reading) goes to one place. Anthropic (cloud) uses the key and model below. Custom endpoint sends the identical calls to a server you run instead: Ollama 0.14 and later, LM Studio, and llama.cpp all speak the Anthropic Messages API. Reading slide images needs a vision-capable model on that server; without one, deck capture still saves the slide text. The usage meter keeps counting tokens either way and prices custom-endpoint calls at $0.00.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOptions({ anthropic: "Anthropic (cloud)", custom: "Custom endpoint (local or LAN)" })
+									.setValue(s.llmProvider)
+									.onChange((v) => {
+										s.llmProvider = v as LlmProvider;
+										save();
+										// the three custom fields only matter for the custom
+										// provider, so they come and go rather than sit there
+										// implying they are always read
+										this.refresh();
+									})
+							);
+						},
+					},
+					{
+						name: "Detect local AI on this machine",
+						desc: "Probes this computer for Ollama (port 11434) and the WhisperX server (port 8571) and fills in their addresses for the whole fleet.",
+						help: "Detection fills endpoints with this machine's network address rather than localhost, so the setting is useful on every synced device at once. It never switches the provider by itself: the dropdown above stays the explicit choice of where the AI runs. Run it on the machine where Ollama or the WhisperX server actually live.",
+						build: (st) => {
+							st.addButton((b) => b.setButtonText("Detect").onClick(() => void this.plugin.detectLocalAi()));
+						},
+					},
+					{
+						name: "Endpoint",
+						desc: "The server's base URL. Ollama answers on http://localhost:11434; use the machine's LAN address when the model runs on another computer.",
+						help: "The base URL every AI call is sent to. Nothing but these calls goes there, and nothing goes to Anthropic while this provider is active. For a server on another machine, use that machine's address and make sure it listens beyond localhost (for Ollama, set OLLAMA_HOST=0.0.0.0).",
+						visible: () => s.llmProvider === "custom",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.placeholder = "http://localhost:11434";
+								t.setValue(s.llmEndpoint).onChange((v) => ((s.llmEndpoint = v.trim()), save(), this.repaint("pill:llm")));
+							});
+						},
+					},
+					{
+						name: "Model",
+						desc: "The model name the server should run, exactly as the server lists it (for example qwen3:30b-a3b on Ollama).",
+						visible: () => s.llmProvider === "custom",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.placeholder = "qwen3:30b-a3b";
+								t.setValue(s.llmModel).onChange((v) => ((s.llmModel = v.trim()), save(), this.repaint("pill:llm")));
+							});
+						},
+					},
+					{
+						name: "API key",
+						desc: "Only if your server checks one (local servers usually do not).",
+						visible: () => s.llmProvider === "custom",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.type = "password";
+								t.setValue(s.llmKey).onChange((v) => ((s.llmKey = v.trim()), save()));
+							});
+						},
+					},
+				],
+			},
+			{
+				// Every key in the plugin lives on this one tab, each provider in its
+				// own group with a pill: which providers you are set up for is a
+				// separate question from which one does which job, and the answer
+				// belongs in one place rather than scattered across the tabs that
+				// happen to use them.
+				heading: "Anthropic",
+				pill: { id: "anthropic", text: () => (s.anthropicKey.trim() ? "Key set" : "No key"), ok: () => !!s.anthropicKey.trim() },
+				rows: [
+					intro(
+						"Writes the notes when the AI model provider is Anthropic (cloud): summaries, action items, and every other extracted section, plus Ask your vault and the assistant chat. Without it you still get transcripts, just no AI-written notes."
+					),
+					{
+						name: "API key",
+						desc: "Used to turn transcripts into structured notes. Leave empty to save transcripts only.",
+						help: "This is the key for the summary, action items, and every other extracted section, plus Ask your vault and the assistant chat. Without it you still get the raw transcript, just no AI-written notes. Stored locally and sent only to Anthropic.",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.type = "password";
+								// repainted in place rather than through refresh(), which
+								// would rebuild the field you are typing into
+								t.setValue(s.anthropicKey).onChange(
+									(v) => ((s.anthropicKey = v.trim()), save(), this.repaint("pill:anthropic"), this.repaint("pill:llm"))
+								);
+							});
+						},
+					},
+					{
+						name: "Model",
+						desc: "claude-haiku-4-5 is the fast, inexpensive default; use claude-opus-4-8 for the highest quality. The AI usage meter shows what this vault is actually spending.",
+						help: "Which Claude model writes the notes. Haiku is fast and cheap and handles most meetings well; Opus is slower and pricier but sharper on long or messy transcripts. The AI usage meter totals what each model has actually cost you.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.anthropicModel).onChange((v) => ((s.anthropicModel = v.trim()), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "Whisper",
+				pill: {
+					id: "whisper",
+					text: () => (whisperReady() ? "Key set" : "No key"),
+					ok: () => whisperReady(),
+				},
+				rows: [
+					intro("Cheapest, and the only one that can run entirely on this machine, but it returns one unlabeled block of text with no speakers."),
+					{
+						name: "Endpoint",
+						desc: "Any OpenAI-compatible base URL: Groq (default), OpenAI (https://api.openai.com/v1), or a self-hosted Whisper server.",
+						help: "The base URL your audio is sent to for transcription; only the /audio/transcriptions path under it is used. Groq hosts Whisper cheaply and is the default. Point it at a server on your own machine to keep audio fully local, in which case no key is needed.",
+						build: (st) => {
+							st.addText((t) =>
+								t.setValue(s.transcriptionEndpoint).onChange(
+									(v) => ((s.transcriptionEndpoint = v.trim()), save(), this.repaint("pill:whisper"), this.repaintPicks())
+								)
+							);
+						},
+					},
+					{
+						name: "API key",
+						help: "The bearer token for the endpoint above. It is stored in this vault's local data file and sent only to that endpoint. Groq and OpenAI both issue keys from their dashboards; a server on your own machine may need none.",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.type = "password";
+								t.setValue(s.transcriptionKey).onChange(
+									(v) => ((s.transcriptionKey = v.trim()), save(), this.repaint("pill:whisper"), this.repaintPicks())
+								);
+							});
+						},
+					},
+					{
+						name: "Model",
+						help: "The transcription model name the endpoint expects, for example whisper-large-v3 on Groq. Use whatever Whisper model your provider recommends; a name it does not recognize makes it reject the request.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.transcriptionModel).onChange((v) => ((s.transcriptionModel = v.trim()), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "WhisperX",
+				pill: { id: "whisperx", text: () => (s.whisperxEndpoint.trim() ? "Ready" : "Not set"), ok: () => !!s.whisperxEndpoint.trim() },
+				rows: [
+					intro(
+						"Speaker labels from your own machine: a self-hosted WhisperX server transcribes AND diarizes, so meetings get Speaker A/B naming with no cloud provider and no audio leaving your network. The server ships inside the plugin; installing it is one button and one command (a machine with an NVIDIA card is strongly recommended)."
+					),
+					{
+						name: "Install the server on this machine",
+						desc: "Writes the server files out of the plugin and shows the one command that sets everything up (private Python environment, GPU-matched install, start at login).",
+						help: "The plugin never runs installers itself; you see the exact command and run it in your own terminal. The script is safe to rerun any time (to add the Hugging Face token later, or after an update). Run it on the machine that should do the transcribing; every other device just uses the address it prints.",
+						build: (st) => {
+							st.addButton((b) => b.setButtonText("Show install steps").setCta().onClick(() => void this.plugin.openServerInstall()));
+						},
+					},
+					{
+						name: "Server address",
+						desc: "Where the WhisperX server listens, for example http://192.168.1.50:8571. No key; keep it on your own network.",
+						help: "The address of the machine running tools/whisperx-server. Audio is POSTed there and diarized segments come back; nothing else is sent. The address syncs to your other devices, so set it once and the whole fleet knows where the box lives. Check server responds only after the server has loaded its models, which takes a minute after it starts.",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.placeholder = "http://192.168.1.50:8571";
+								t.setValue(s.whisperxEndpoint).onChange(
+									(v) => ((s.whisperxEndpoint = v.trim()), save(), this.repaint("pill:whisperx"), this.repaintPicks())
+								);
+							});
+							st.addButton((b) => b.setButtonText("Check server").onClick(() => void this.plugin.verifyWhisperX()));
+						},
+					},
+				],
+			},
+			{
+				heading: "AssemblyAI",
+				pill: { id: "assemblyai", text: () => (s.assemblyaiKey.trim() ? "Key set" : "No key"), ok: () => !!s.assemblyaiKey.trim() },
+				rows: [
+					{
+						name: "API key",
+						desc: "Create a key at assemblyai.com; the same key handles upload, transcription, and speaker diarization. Recording gives Speaker A / Speaker B labels, then a dialog to name them.",
+						help: "One key does the whole job: it uploads the audio, transcribes it, and separates the speakers. Afterward you get a dialog to put real names to Speaker A / Speaker B, which then become attendee links in the note. Test key checks the key without spending credits.",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.type = "password";
+								t.setValue(s.assemblyaiKey).onChange(
+									(v) => ((s.assemblyaiKey = v.trim()), save(), this.repaint("pill:assemblyai"), this.repaintPicks())
+								);
+							});
+							st.addButton((b) => b.setButtonText("Test key").onClick(() => void this.plugin.verifyAssemblyKey()));
+						},
+					},
+				],
+			},
+			{
+				heading: "Deepgram",
+				pill: { id: "deepgram", text: () => (s.deepgramKey.trim() ? "Key set" : "No key"), ok: () => !!s.deepgramKey.trim() },
+				rows: [
+					{
+						name: "API key",
+						desc: "Create a key at deepgram.com; new accounts start with free credit. Recording gives Speaker A / Speaker B labels, then a dialog to name them.",
+						help: "New accounts start with free credit, which usually makes this the cheapest way to try speaker labels. Like AssemblyAI it diarizes and then prompts you to name the speakers. Test key verifies it without spending credit. Deepgram publishes its current rates on its own site; they are deliberately not repeated here, since a number baked into a plugin goes stale without anyone noticing.",
+						build: (st) => {
+							st.addText((t) => {
+								t.inputEl.type = "password";
+								t.setValue(s.deepgramKey).onChange(
+									(v) => ((s.deepgramKey = v.trim()), save(), this.repaint("pill:deepgram"), this.repaintPicks())
+								);
+							});
+							st.addButton((b) => b.setButtonText("Test key").onClick(() => void this.plugin.verifyDeepgramKey()));
+						},
+					},
+					{
+						name: "Model",
+						desc: "nova-2 is a good default; nova-3 is the newest.",
+						help: "Which Deepgram speech model transcribes your audio. nova-2 is accurate and inexpensive; nova-3 is the latest. Leaving it empty falls back to nova-2. Speaker separation always uses Deepgram's newest diarizer (v2), whichever model is chosen here.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.deepgramModel).onChange((v) => ((s.deepgramModel = v.trim() || "nova-2"), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "Ribbon icons",
+				rows: (
+					[
+						["Start recording", "The microphone icon. Its command works either way.", () => s.ribbonRecord, (v: boolean) => (s.ribbonRecord = v)],
+						["New meeting note", "The calendar icon.", () => s.ribbonMeeting, (v: boolean) => (s.ribbonMeeting = v)],
+						["Morning briefing", "The sunrise icon.", () => s.ribbonBriefing, (v: boolean) => (s.ribbonBriefing = v)],
+						["Open the assistant", "The sparkles icon.", () => s.ribbonAssistant, (v: boolean) => (s.ribbonAssistant = v)],
+					] as [string, string, () => boolean, (v: boolean) => void][]
+				).map(([name, desc, get, set]) => ({
+					name,
+					desc,
+					build: (st: Setting) => {
+						st.addToggle((t) =>
+							t.setValue(get()).onChange((v) => {
+								set(v);
+								save();
+								this.plugin.applyRibbonVisibility();
+							})
+						);
+					},
+				})),
+			},
+		];
+
+		// ---------------------------------------------------------------- Audio
+
+		const audio: Group[] = [
+			{
+				heading: "Transcription",
+				rows: [
+					{
+						name: "Default provider",
+						desc: "Used by anything that has not been given its own provider. Whisper is the cheapest but has no speaker labels. AssemblyAI and Deepgram both add them. Check each provider's own site for current rates.",
+						help: "Whisper returns one unlabeled block of text, so it cannot tell who said what. AssemblyAI and Deepgram diarize, tagging each turn Speaker A, Speaker B, and so on, which is what powers naming the speakers and the per-person talk-time shares. Meetings, Capture, and YouTube can each pick their own provider on their own tab; whatever they leave on Use the default lands here. Keys for every provider live on the API keys tab.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOptions({
+										whisper: "Whisper (OpenAI-compatible)",
+										assemblyai: "AssemblyAI (speaker labels)",
+										deepgram: "Deepgram (speaker labels)",
+										whisperx: "WhisperX (speaker labels, your own server)",
+									})
+									.setValue(s.transcriptionProvider)
+									.onChange((v) => ((s.transcriptionProvider = v as TranscriptionProvider), save(), this.repaintPicks()))
+							);
+						},
+					},
+				],
+			},
+			{
+				// the Anthropic key and model live on the Setup tab with every other key
+				heading: "Extraction",
+				rows: [
+					...extractionRows(
+						(k) => s.extractions[k],
+						(k, v) => (s.extractions[k] = v),
+						false
+					),
+					{
+						name: "Include raw transcript",
+						desc: "Append the full transcript to every note for traceability.",
+						help: "Keeps the verbatim transcript under a Transcript heading so you can always check the summary against what was actually said, and re-extract later. Off saves only the AI notes and drops the raw text. A failed extraction still writes the transcript regardless, so nothing is ever lost.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.includeTranscript).onChange((v) => ((s.includeTranscript = v), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "Capture",
+				rows: [
+					providerPick(
+						"capture",
+						"Which provider transcribes dropped audio and standalone recordings. A solo memo has nothing to diarize, so Whisper is usually enough and costs the least.",
+						() => s.captureProvider,
+						(v) => (s.captureProvider = v),
+						"This covers audio dropped into the capture folder, files you hand-pick to process, and recordings started from the ribbon without a meeting note. If you record a real multi-person meeting this way, Whisper gives you no speaker labels, and recovering them means re-processing the saved audio."
+					),
+					{
+						name: "Capture system audio",
+						desc: "Desktop only: also record what plays through your speakers/headset, so both sides of Teams/Zoom/Meet calls are captured. The recording notice tells you which sources are live.",
+						help: "Records the audio playing through your speakers or headset alongside your microphone, so both sides of a Teams, Zoom, or Meet call are captured, not just you. The recording notice lists which sources are live. Desktop only; ignored on mobile.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.captureSystemAudio).onChange((v) => ((s.captureSystemAudio = v), save())));
+						},
+					},
+					{
+						name: "Capture folder",
+						desc: "Audio dropped or recorded into this folder is processed automatically.",
+						help: "The drop zone for hands-off capture: any audio you record or move into this folder is transcribed and turned into a note without further prompting. Useful for saving a voice memo from your phone and letting it process when it syncs in.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.captureFolder).onChange((v) => ((s.captureFolder = v.trim() || "Capture"), save())));
+						},
+					},
+					{
+						name: "Folder for recordings",
+						desc: "Empty keeps recordings in the capture folder. When set, recordings land here instead, and the folder is created if missing. Example: _resources/audio",
+						help: "Where the audio files themselves are stored. Empty leaves them in the capture folder; set it to keep recordings out of the way, for example under _resources/audio, created if missing. The notes still land in the output folder either way.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("_resources/audio").setValue(s.audioFolder).onChange((v) => ((s.audioFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Output folder",
+						help: "Where finished notes are written. Most other features (briefings, people pages, chats) nest under this folder unless you point them somewhere else. Defaults to Capture/Notes.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.outputFolder).onChange((v) => ((s.outputFolder = v.trim() || "Capture/Notes"), save())));
+						},
+					},
+					{
+						name: "Filename template",
+						desc: "{{basename}} = audio filename, {{date}} = today. Extension optional; defaults to .md.",
+						help: "The name pattern for a note made from an audio file. {{basename}} is the audio file's own name and {{date}} is today; for example {{date}} {{basename}} dates each note. Add an extension or it defaults to .md.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.filenameTemplate).onChange((v) => ((s.filenameTemplate = v), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "Screens",
+				rows: [
+					intro(
+						"A recorded meeting is mostly a shared screen, and the screen is often the point. Turned on, a video capture is walked after its note is written and a frame is kept wherever the picture changed, landing under a Screens heading with the timestamp each one came from. Audio-only captures are unaffected. Run Add screens from a video file to do this to any note by hand, including from a recording that is not in the vault."
+					),
+					{
+						name: "Screens from a video capture",
+						desc: "Scan video captures for the moments the picture changed and add those frames to the note. Off by default: it costs a decode of the whole recording and puts image files in your vault.",
+						help: "Nothing needs installing for this. Obsidian already decodes a video in order to play it, so the frames come from the same decoder, not from ffmpeg. The cost is time and space: roughly a minute of background work per hour of recording, and about a megabyte of images per meeting at the default cap. The per-file dialog has its own toggle, so you can leave this off and still ask for screens on the recordings where the screen mattered.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.framesFromVideo).onChange((v) => ((s.framesFromVideo = v), save(), this.refresh())));
+						},
+					},
+					{
+						name: "Sample every",
+						desc: "Seconds between looks at the picture. Smaller catches a screen that was only up briefly and costs one seek per step; an hour at 5 seconds is around 720 of them.",
+						visible: () => s.framesFromVideo,
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("5")
+									.setValue(String(s.frameEvery))
+									.onChange((v) => {
+										const n = Number(v.trim());
+										if (Number.isFinite(n) && n >= 1) {
+											s.frameEvery = Math.round(n);
+											save();
+										}
+									})
+							);
+						},
+					},
+					{
+						name: "Change threshold",
+						desc: "How much of the picture must change, as a percentage, to count as a new screen.",
+						help: "Each look is compared with the last frame that counted as a change, not with the one before it, so a slow fade cannot creep past this a pixel at a time. 12 percent clears a person shifting in their chair and still catches a slide advancing. Lower it if a screen you wanted was skipped; raise it if you are getting the same screen several times.",
+						visible: () => s.framesFromVideo,
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("12")
+									.setValue(String(s.frameThreshold))
+									.onChange((v) => {
+										const n = Number(v.trim());
+										if (Number.isFinite(n) && n >= 0 && n <= 100) {
+											s.frameThreshold = n;
+											save();
+										}
+									})
+							);
+						},
+					},
+					{
+						name: "Maximum screens",
+						desc: "The cap for one recording. When more changes are found than this, the biggest changes are kept and a notice says how many were left out.",
+						visible: () => s.framesFromVideo,
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("12")
+									.setValue(String(s.frameMax))
+									.onChange((v) => {
+										const n = Number(v.trim());
+										if (Number.isFinite(n) && n >= 1) {
+											s.frameMax = Math.round(n);
+											save();
+										}
+									})
+							);
+						},
+					},
+					{
+						name: "Read each screen",
+						desc: "Have the AI model read every kept frame and quote what it found under the image, so a screen is searchable as text. Costs one image call per frame.",
+						help: "Without this a screen is only a picture: it shows up in the note but no search will ever find it by what it said. Reading them turns each frame into a few lines of quoted text under the image, which is what makes an architecture page or a number on a slide findable later. It is a separate image call per frame, so twelve screens is twelve calls, and it lands in the usage meter with everything else.",
+						visible: () => s.framesFromVideo,
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.frameCaptions).onChange((v) => ((s.frameCaptions = v), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "Processing",
+				rows: [
+					{
+						name: "Process new audio automatically",
+						help: "On, audio that lands in the capture folder is transcribed and turned into a note on its own. Off means nothing happens until you run Process on a file by hand, which is handy when you want to choose the sections or template first.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.autoProcess).onChange((v) => ((s.autoProcess = v), save())));
+						},
+					},
+					{
+						name: "This device's role",
+						desc: "What this device does with new recordings. Per-device (never synced), so a phone can record while a desktop or home server transcribes.",
+						help: "Record and process is the everything device, exactly as before. Record only saves audio and marks it pending; nothing is transcribed on this device (right for phones, tablets, and machines without keys). Processor also watches the vault and claims pending items other devices parked; run it on the machine that holds the keys or the local AI. Queued items show in the status bar, and the command \"Process pending recordings on this device now\" is the manual override from anywhere. Rotated recordings park their part timing in a small .json next to the audio, so a sync service that skips .json files should be set to sync all file types.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOptions({
+										full: "Record and process (default)",
+										capture: "Record only (queue for another device)",
+										processor: "Processor (handles queued items too)",
+									})
+									.setValue(s.deviceRole)
+									.onChange((v) => ((s.deviceRole = v as DeviceRole), save(), this.plugin.paintQueueStatus()))
+							);
+						},
+					},
+					{
+						name: "Audio after processing",
+						desc: "Keep the recording (embedded in the note), or trash it once the note is written. The transcript is the durable record. Trashing frees space and tightens privacy.",
+						help: "Keep embeds the recording in the note and leaves the file in place. Trash moves it to the system trash (recoverable) once the note is written, since the transcript is the lasting record; it saves space and tightens privacy. Only auto-captured audio is ever trashed, never a file you picked by hand.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOptions({ keep: "Keep the audio", trash: "Move to trash after the note is written" })
+									.setValue(s.audioRetention)
+									.onChange((v) => ((s.audioRetention = v as "keep" | "trash"), save()))
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "Custom templates",
+				rows: [
+					{
+						name: "",
+						desc: "Named section presets that appear in the Process and Re-extract dialogs, alongside the built-ins. Handy for a recurring meeting type that always needs the same sections.",
+					},
+					listRow(["custom templates", "presets", "sections"], (el) => {
+						for (const [i, tpl] of s.customTemplates.entries()) {
+							const st = new Setting(el)
+								.setName(tpl.name || "(unnamed)")
+								.setDesc(tpl.sections.length ? tpl.sections.join(", ") : "no sections yet, edit below")
+								.addButton((b) => b.setButtonText("Edit").onClick(() => new TemplateEditModal(this.app, this.plugin, tpl, () => this.refresh()).open()))
+								.addExtraButton((b) =>
+									b.setIcon("trash").setTooltip("Delete").onClick(() => {
+										s.customTemplates.splice(i, 1);
+										save();
+										this.refresh();
+									})
+								);
+							this.addHelp(
+								st,
+								"A saved section preset. It appears in the Process and Re-extract dialogs so you can apply this exact set of sections in one pick; Edit renames it or changes its sections, and the trash removes it."
+							);
+						}
+					}),
+					{
+						name: "",
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("New template").setCta().onClick(() => {
+									const tpl = { name: "New template", sections: ["summary", "actions"] as ExtractionKey[] };
+									s.customTemplates.push(tpl);
+									save();
+									new TemplateEditModal(this.app, this.plugin, tpl, () => this.refresh()).open();
+								})
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "Transcript corrections",
+				rows: [
+					{
+						name: "How corrections work",
+						desc: "Fixes for misheard names, places, and words. Each is applied to every new transcript automatically, so captures get more accurate over time. Add one from any note with the 'Correct a name or term' command (select the wrong text first), or with Add below.",
+						help: "A correction replaces a whole word or name everywhere it appears, so a full invite name like 'Deverakonda Rajasekhar' or a misheard 'Shaker' both become 'Sekhar'. Matching is case-sensitive and whole-word, so a name rule never rewrites an unrelated word. Remove one and new transcripts stop applying it.",
+					},
+					// corrections are also added from a note, by the "Correct a name or
+					// term" command, so this list has to be rebuilt whenever the tab is
+					// drawn rather than baked into the definitions once
+					listRow(["corrections", "misheard", "names"], (el) => {
+						for (const [i, corr] of s.corrections.entries()) {
+							new Setting(el).setName(`${corr.from}  →  ${corr.to}`).addExtraButton((b) =>
+								b.setIcon("trash").setTooltip("Remove").onClick(() => {
+									s.corrections.splice(i, 1);
+									save();
+									this.refresh();
+								})
+							);
+						}
+					}),
+					{
+						name: "",
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("Add correction").onClick(() =>
+									new CorrectionModal(this.app, "", (fromRaw, toRaw) => {
+										const from = fromRaw.trim();
+										if (!from || from === toRaw.trim()) return;
+										s.corrections = s.corrections.filter((cc) => cc.from !== from);
+										s.corrections.push({ from, to: toRaw });
+										save();
+										this.refresh();
+									}).open()
+								)
+							);
+						},
+					},
+				],
+			},
+		];
+
+		// ------------------------------------------------------------- Meetings
+
+		const seriesDesc = () =>
+			`${Object.keys(s.seriesTemplates).length} series remember their own extraction sections. Set these from a recording's Process dialog.`;
+
+		const meetings: Group[] = [
+			{
+				heading: "Meetings",
+				rows: [
+					providerPick(
+						"meeting",
+						"Which provider transcribes a recording that folds into a meeting note. Meetings usually want speaker labels, so AssemblyAI or Deepgram.",
+						() => s.meetingProvider,
+						(v) => (s.meetingProvider = v),
+						"Only a recording started from a meeting note counts as a meeting here; a standalone recording from the ribbon is treated as a capture and uses the Capture tab's provider. Whisper cannot tell speakers apart, so choosing it here costs you the speaker labels, the naming dialog, and the per-person talk-time shares."
+					),
+					{
+						name: "Name the speakers",
+						desc: "After a diarized transcription, guess who Speaker A/B are from the words themselves; the guesses become one-click suggestions when you name the speakers.",
+						help: "Only works after a diarized transcription (AssemblyAI, Deepgram, or WhisperX). Claude reads the words to guess who each speaker is. With naming set to the transcript, the guesses appear at the top of the label menu as one-click choices; with the dialog, they prefill the form. Off skips the guessing and leaves plain letters either way.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.nameSpeakers).onChange((v) => ((s.nameSpeakers = v), save())));
+						},
+					},
+					{
+						name: "Name speakers",
+						desc: "In the transcript: the note opens with lettered voices, click a turn to hear it and click the letter to tag it (the Otter way). In a dialog: a form asks before the note is written.",
+						help: "Where the letters become people. In the transcript, the finished note opens immediately: click anywhere in a turn to play that voice, then click the letter and pick who it is (the AI guess, the note's attendees, and frequent attendees are one click; Move this turn fixes a single misattributed line). In a dialog, transcription pauses on a form that names every letter up front, with a play button per voice. The Rename speakers command opens that form any time either way.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOption("transcript", "In the transcript")
+									.addOption("dialog", "In a dialog first")
+									.setValue(s.speakerNaming)
+									.onChange((v) => ((s.speakerNaming = v === "dialog" ? "dialog" : "transcript"), save()))
+							);
+						},
+					},
+					{
+						name: "Action items as tasks",
+						desc: "Emit action items as '- [ ] Task [[Owner]] 📅 date' checklist lines (Tasks format), so they appear in todo dashboards with a backlink to the meeting. Off = the classic table.",
+						help: "On, each action becomes a checkbox line with an owner link and a due date, so it shows up in Tasks and to-do dashboards and links back to the meeting. Off lays the actions out as a plain Owner / Task / Deadline table instead. Owners and dates are only filled when the transcript actually states them.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.actionsAsTasks).onChange((v) => ((s.actionsAsTasks = v), save())));
+						},
+					},
+					{
+						name: "Timestamp each point",
+						desc: "End every summary, decision, risk and question with the [m:ss] it came from, so each point clicks back to that moment in the recording.",
+						help: "A summary tells you what was decided; a stamp tells you where to go and hear it, which is what you want when the summary is not quite enough. It also lets a screen be placed beside the point it shows rather than in a gallery at the bottom, so this is worth turning on if you use Screens. The model is told to leave the stamp off rather than guess, so an item it cannot place carries none. Action items and Keywords never take stamps: both have a fixed shape that a trailing stamp would break.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.stampSummaries).onChange((v) => ((s.stampSummaries = v), save())));
+						},
+					},
+					{
+						name: "Link recurring meetings",
+						desc: "When a capture's name matches an earlier one, give the extractor last time's decisions and open items as context, and add a 'Carried over' section for anything still open.",
+						help: "When a new capture's name matches an earlier one (a standing weekly, say), the extractor is handed last time's decisions and still-open items, and the note gets a Carried over section linking anything not yet resolved. The match ignores dates and counters in the name, so 'Weekly sync' lines up across weeks.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.seriesAware).onChange((v) => ((s.seriesAware = v), save())));
+						},
+					},
+					{
+						name: "Recording panel",
+						desc: "Show a sidebar while recording with a running timer, an input-level meter, and a Mark moment button, so capture is always visibly confirmed. On desktop with AssemblyAI it also streams the live transcript; on other providers the full transcript appears after you stop. Purely additive; the recording never depends on it.",
+						help: "The on-page bar that proves the recording is really running: a timer, a moving input-level meter, and a Mark moment button. On desktop with AssemblyAI it also streams the transcript live; other providers show it after you stop. It is only a display, so closing it never affects the recording.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.liveTranscript).onChange((v) => ((s.liveTranscript = v), save())));
+						},
+					},
+					{
+						name: "Your name",
+						desc: 'Enables the "Was I mentioned?" quick question, and tags solo voice memos as you.',
+						help: "Lets the plugin tell which voice and which mentions are yours: it powers the 'Was I mentioned?' quick question and tags solo voice memos as spoken by you. Used only for matching; nothing beyond that is written into notes.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Steve").setValue(s.yourName).onChange((v) => ((s.yourName = v.trim()), save())));
+						},
+					},
+					{
+						name: "Auto weekly digest",
+						desc: "On the first launch of each week, quietly build the meeting digest if the week had meetings. Never steals focus.",
+						help: "At the first launch of a new week, if the previous week had meetings, the digest note (owner task table, decisions, open questions) is built in the background. It never steals focus, and you can always run it by hand from the command palette.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.autoWeeklyDigest).onChange((v) => ((s.autoWeeklyDigest = v), save())));
+						},
+					},
+					{
+						name: "Per-series section defaults",
+						// remembered from a recording's Process dialog, so both the count
+						// and whether this row exists at all are read on every render
+						liveDesc: seriesDesc,
+						help: "Some recurring meetings always want the same sections. When you tick 'remember for this series' in a Process dialog, that choice is stored here and reused automatically next time the series comes up. Clear all forgets every remembered series.",
+						visible: () => Object.keys(s.seriesTemplates).length > 0,
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("Clear all").onClick(() => {
+									s.seriesTemplates = {};
+									save();
+									this.refresh();
+								})
+							);
+						},
+					},
+					{
+						name: "Rotate recording parts after (minutes)",
+						desc: "Long recordings split into parts so transcription size limits never truncate a meeting; parts are transcribed together into one note. 0 turns rotation off.",
+						help: "Long recordings are split into parts of this length so a single file never exceeds a provider's upload size limit and gets cut off; the parts are transcribed and stitched back into one note. 0 turns splitting off. Only matters for very long sessions.",
+						build: (st) => {
+							st.addText((t) =>
+								t.setValue(String(s.maxPartMinutes)).onChange((v) => {
+									s.maxPartMinutes = Math.max(0, Math.floor(Number(v) || 0));
+									save();
+								})
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "Voice identity",
+				pill: { id: "voice", text: () => (s.voiceIdentity ? "On" : "Off"), ok: () => s.voiceIdentity },
+				rows: [
+					{
+						name: "Recognize voices across meetings",
+						desc: "Name a speaker once and the voice is remembered; the next recording arrives with that letter already suggesting the name, and a merged speaker is split apart by voice.",
+						help: "A voiceprint is a fingerprint of a voice (a biometric), so this stays off until you turn it on. Prints are computed by your own WhisperX server, stored only in the vault file named below, synced only where your vault syncs, and never sent to any cloud service. Recognition is a suggestion, never an assertion: a matched voice appears at the top of the letter's menu as a one-click choice, exactly like the text guesses. It also audits every diarized cluster turn by turn, so a Speaker 2 that is secretly two people is split before the note is written. Needs WhisperX as the meeting provider and the pyannote/embedding model accepted on the server (see the server README). Forget below truly deletes a voice; deleting the vault file deletes them all.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.voiceIdentity).onChange((v) => ((s.voiceIdentity = v), save(), this.refresh())));
+						},
+					},
+					{
+						name: "Voiceprint file",
+						desc: "Where the voice library lives in your vault. It syncs with the vault, so voices named on one device are recognized on the others.",
+						visible: () => s.voiceIdentity,
+						build: (st) => {
+							st.addText((t) =>
+								t.setValue(s.voiceprintsFile).onChange((v) => ((s.voiceprintsFile = v.trim() || "_resources/voiceprints.json"), save()))
+							);
+						},
+					},
+					// voices are learned from the meetings themselves, so this list is
+					// filled on every render rather than baked into the definitions
+					{
+						...listRow(["voices", "voiceprints", "remembered"], (el) => {
+							// 1.13 still renders a hidden row, and reading the library is a
+							// file read, so skip it rather than do it invisibly
+							if (!s.voiceIdentity) return;
+							void (async () => {
+								const rows = summarizeVoiceprints(await this.plugin.loadVoiceprints());
+								if (!el.isConnected) return; // the tab moved on while we loaded
+								if (!rows.length) {
+									new Setting(el)
+										.setName("No voices remembered yet")
+										.setDesc("Name a speaker on a WhisperX transcript and that voice is learned from the meeting itself.");
+									return;
+								}
+								for (const r of rows) {
+									new Setting(el)
+										.setName(r.person)
+										.setDesc(
+											`${r.samples} enrollment${r.samples === 1 ? "" : "s"} across ${r.centroids} voice profile${r.centroids === 1 ? "" : "s"} (a headset and a room mic count separately)`
+										)
+										.addButton((b) =>
+											this.destructive(b)
+												.setButtonText("Forget")
+												.onClick(async () => {
+													await this.plugin.saveVoiceprints(forgetVoiceprint(await this.plugin.loadVoiceprints(), r.person));
+													new Notice(`Power Assistant: forgot ${r.person}'s voice.`);
+													this.refresh();
+												})
+										);
+								}
+							})();
+						}),
+						visible: () => s.voiceIdentity,
+					},
+				],
+			},
+			{
+				heading: "Morning briefing",
+				rows: [
+					{
+						name: "Auto morning briefing",
+						desc: "On the first launch of each day, open a briefing with today's meetings, commitments coming due, documents due soon, and open questions. Also available any time via the sunrise ribbon or the Morning briefing command.",
+						help: "At the first launch each day, a briefing note is built and opened: today's meetings (with a foldable details callout each), your commitments coming due, bills and documents due soon, and recent open questions. It fires once a day; the sunrise ribbon and Morning briefing command run it any time.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.autoMorningBriefing).onChange((v) => ((s.autoMorningBriefing = v), save())));
+						},
+					},
+					{
+						name: "Briefing horizon (days)",
+						desc: "How far ahead a commitment or document counts as coming due in the briefing.",
+						help: "The look-ahead window for the Commitments and Bills sections: a task or document counts as coming due if its date falls within this many days. Anything already overdue always shows regardless. 3 is a sensible default; raise it to see further out.",
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setValue(String(s.briefingHorizonDays))
+									.onChange((v) => ((s.briefingHorizonDays = Math.max(0, Math.min(30, parseInt(v, 10) || 0))), save()))
+							);
+						},
+					},
+					{
+						name: "Briefing folder",
+						desc: "Where morning briefings are saved. Empty keeps them in a Briefings folder under the output folder. Example: Capture/Notes/Briefings",
+						help: "The folder each day's briefing note is written to, created if missing. Leave it empty to keep the default, a Briefings folder under your output folder. One note is written per day, named by its date.",
+						build: (st) => {
+							st.addText((t) =>
+								t.setPlaceholder(`${s.outputFolder}/Briefings`).setValue(s.briefingsFolder).onChange((v) => ((s.briefingsFolder = cleanFolderPath(v)), save()))
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "Meeting notes",
+				rows: [
+					{
+						name: "Meetings folder",
+						desc: "Where the New meeting note command creates pages. Empty uses the output folder. Created if missing.",
+						help: "Where the New meeting note command (and its ribbon icon) puts the page it creates, so you can prep an agenda before a call and record straight into it. Empty uses the output folder; created if missing.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Meetings").setValue(s.meetingsFolder).onChange((v) => ((s.meetingsFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Ask where a quick recording goes",
+						desc: "When a mic-button recording stops, ask whether it becomes a meeting note in the Meetings folder or the usual capture note.",
+						help: "The mic button records without a meeting note, and those recordings normally become capture notes in the output folder. With this on, stopping one asks whether it should instead become a meeting note: filed in the Meetings folder, named by date and title, transcribed by the meeting provider, and eligible for series carry-over. Closing the dialog keeps it a capture, and a recording left unanswered is simply saved (Process pending recordings picks it up). Recordings started from a meeting note never ask; they already have a home.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.askQuickFiling).onChange((v) => ((s.askQuickFiling = v), save())));
+						},
+					},
+					{
+						name: "Meeting filename",
+						desc: "{{date}} = today, {{title}} = what you type. Extension optional; defaults to .md.",
+						help: "The name pattern for a page from the New meeting note command. {{date}} is today and {{title}} is what you type in the dialog. Add an extension or it defaults to .md.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.meetingFilename).onChange((v) => ((s.meetingFilename = v || "{{date}} {{title}}"), save())));
+						},
+					},
+					{
+						name: "Meeting template note",
+						desc: "A note in your vault whose body is the template. Its own properties are ignored; the plugin writes the meeting's. Empty uses the box below.",
+						help: "The better place to keep a template, if you already keep them as notes: you write it in the editor with live preview instead of a settings box, it syncs with the vault, and its history is your vault's history. Name any note here and its body becomes what a new meeting note starts with, tokens and all. Whatever properties the template note carries (an icon, a description, the fields some other template tool wants) are ignored: they describe the template, not the meeting, and the plugin writes the meeting's own properties itself. Tokens this plugin does not know are left exactly as they are, so a template shared with another tool keeps that tool's placeholders intact. If the note is renamed or deleted, a new meeting says so once and falls back to the box below rather than failing.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Templates/Meeting Notes").setValue(s.meetingTemplateFile).onChange((v) => ((s.meetingTemplateFile = v.trim()), save())));
+							st.addExtraButton((b) =>
+								b
+									.setIcon("search")
+									.setTooltip("Pick a note")
+									.onClick(() =>
+										new NotePickModal(this.app, (f) => {
+											s.meetingTemplateFile = f.path;
+											save();
+											this.refresh();
+										}).open()
+									)
+							);
+						},
+					},
+					{
+						name: "Meeting note template",
+						desc: `What a new meeting note starts with. Tokens: ${MEETING_TOKENS.map((t) => `{{${t.token}}}`).join(", ")}. A line whose tokens are all empty is left out.`,
+						help:
+							"The body of a new meeting note, yours to arrange. The properties above it are not part of this: they are structured fields Obsidian edits in place, and one malformed line in a template would break every note's YAML, so the plugin keeps writing those.\n\n" +
+							MEETING_TOKENS.map((t) => `{{${t.token}}}, ${t.what}`).join("\n") +
+							"\n\nA line that carries tokens and gets nothing back is dropped, label and all: put \"**Where:** {{where}}\" in and a meeting with no location leaves no orphan \"Where:\" behind. A line with no tokens is kept exactly as written, so headings and checklists survive untouched. An unknown token counts as empty, which takes its line with it, worth knowing if a line disappears and you expected it. Empty resets to the default.",
+						cls: "pcap-template-item",
+						build: (st) => {
+							st.addTextArea((t) => {
+								t.setPlaceholder(DEFAULT_MEETING_TEMPLATE)
+									.setValue(s.meetingTemplate)
+									.onChange((v) => ((s.meetingTemplate = v), save()));
+								t.inputEl.rows = 8;
+								t.inputEl.addClass("pcap-template-area");
+							});
+							st.addExtraButton((b) =>
+								b
+									.setIcon("rotate-ccw")
+									.setTooltip("Back to the default template")
+									.onClick(() => {
+										s.meetingTemplate = DEFAULT_MEETING_TEMPLATE;
+										save();
+										this.refresh();
+									})
+							);
+						},
+					},
+					{
+						name: "People folder",
+						desc: "Attendee names link into this folder, so clicking one creates the person page there, and person reports are written to it. Empty uses People under the output folder.",
+						help: "Attendee names are linked into this folder, so clicking one opens or creates that person's page here rather than at the vault root, and person reports (their meetings, open items, decisions) are written here too. Empty uses a People folder under the output folder.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Capture/Notes/People").setValue(s.peopleFolder).onChange((v) => ((s.peopleFolder = cleanFolderPath(v)), save())));
+						},
+					},
+				],
+			},
+			{
+				heading: "Microsoft 365 calendar",
+				rows: [
+					intro(
+						"Import upcoming meetings straight from your Outlook/Teams calendar. Register a free Azure app (Entra ID > App registrations), turn on 'Allow public client flows', add the delegated Calendars.Read permission, and paste its Application (client) ID below. The README has the exact steps. Sign-in tokens are stored locally in this vault."
+					),
+					{
+						name: "Application (client) ID",
+						desc: "From your Azure app registration.",
+						help: "The identifier of the Azure app you register to reach your calendar; paste it from the app's Overview page. The README walks through creating the app (Entra ID, App registrations, allow public client flows, delegated Calendars.Read). It is not a secret, and sign-in tokens are stored only in this vault.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("00000000-0000-0000-0000-000000000000").setValue(s.graphClientId).onChange((v) => ((s.graphClientId = v.trim()), save())));
+						},
+					},
+					{
+						name: "Tenant",
+						desc: "If your app's Supported account types is 'My organization only' (the registration default), paste the Directory (tenant) ID from the app's Overview page. 'common' only works for apps registered as multi-tenant.",
+						help: "Leave this 'common' only if the app is registered as multi-tenant. If its Supported account types is 'My organization only' (the registration default), 'common' fails sign-in with an AADSTS error and you must paste the Directory (tenant) ID from the app's Overview page here instead.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("common").setValue(s.graphTenant).onChange((v) => ((s.graphTenant = v.trim() || "common"), save())));
+						},
+					},
+					{
+						name: "Connection",
+						// read on every render: a token can expire, or be cleared by a
+						// failed refresh, while this tab sits closed
+						liveDesc: () =>
+							this.plugin.graphConnected() ? "Connected. Run 'Import meeting from calendar' to pick meetings." : "Not connected.",
+						help: "Runs the one-time device-code sign-in: you open a link and type a code in your own browser, so the plugin never sees your password. Once connected, Import meeting from calendar lets you pick meetings to pull in as notes. Disconnect clears the stored tokens.",
+						build: (st) => {
+							st.addButton((b) => {
+								if (this.plugin.graphConnected()) b.setButtonText("Disconnect").onClick(() => this.plugin.disconnectGraph());
+								else b.setButtonText("Connect").setCta().onClick(() => void this.plugin.connectGraph());
+							});
+						},
+					},
+				],
+			},
+		];
+
+		// -------------------------------------------------------------- Capture
+
+		const capture: Group[] = [
+			{
+				heading: "PowerPoint",
+				rows: [
+					{
+						name: "Deck notes folder",
+						desc: "Where a captured deck's note is written. Empty uses the output folder.",
+						help: "Drop a .pptx onto a note, or run 'Capture a PowerPoint', and the deck is indexed into a note here: a section per slide with its text, its pictures, and the speaker notes. The deck file itself stays where it landed and the note links back to it. The folder is created if it is missing.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Sources/Decks").setValue(s.pptxFolder).onChange((v) => ((s.pptxFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Read slide images",
+						desc: "Whether slide pictures are read for the text in them. Each capture asks, so this is only the starting choice.",
+						help: "Slide text and speaker notes always come through and cost nothing extra. Reading pictures sends them to Claude on your key, which is what catches the words inside charts, diagrams, and screenshots, and it lands in the usage meter. 'Larger images only' is the sensible middle: it keeps the real pictures and drops the bullet icons a deck is littered with. 'Every image' spares nothing, for the rare deck where the small marks matter.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOption("none", "No images, text only")
+									.addOption("large", "Larger images only")
+									.addOption("all", "Every image")
+									.setValue(s.pptxOcr)
+									.onChange((v) => {
+										s.pptxOcr = v as OcrMode;
+										save();
+										this.refresh();
+									})
+							);
+						},
+					},
+					{
+						name: "Smallest picture to keep",
+						desc: "Pictures drawn smaller than this on the slide, in inches, are decoration: they are neither kept nor read.",
+						help: "This measures how big a picture is DRAWN on the slide, not how many pixels it holds. Bullet icons routinely ship as 256x256 images and render at a third of an inch, so pixels tell you nothing about the job a picture does. One inch clears the icons and keeps the charts. Raise it if decorative art still lands in the note, lower it if a small chart is being dropped.",
+						visible: () => s.pptxOcr !== "all",
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("1")
+									.setValue(String(s.pptxMinInches))
+									.onChange((v) => {
+										const n = Number(v.trim());
+										if (Number.isFinite(n) && n >= 0) {
+											s.pptxMinInches = n;
+											save();
+										}
+									})
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "YouTube",
+				rows: [
+					providerPick(
+						"youtube",
+						"Which provider transcribes a video's audio, when Transcribe the audio below is on. A video is usually one narrator, so Whisper is normally the right call.",
+						() => s.youtubeProvider,
+						(v) => (s.youtubeProvider = v),
+						"Only used when Transcribe the audio is on and the plugin downloads the audio instead of taking the free caption track. Speaker labels rarely matter for a video, so the cheapest provider is usually the right one here."
+					),
+					{
+						name: "YouTube folder",
+						desc: "Where captured YouTube notes are written. Empty uses the output folder.",
+						help: "Where notes captured from a YouTube URL are written. Empty uses your main output folder; set it to keep video notes somewhere separate like Personal/YouTube, created if missing.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Personal/YouTube").setValue(s.youtubeFolder).onChange((v) => ((s.youtubeFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "YouTube filename",
+						desc: "{{title}} = the video title, {{date}} = today. For example {{date}} {{title}} puts the date in front. Extension optional; defaults to .md.",
+						help: "The name pattern for a captured video note. {{title}} is the video's title and {{date}} is today, so {{date}} {{title}} dates each one. Add an extension or it defaults to .md.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("{{title}}").setValue(s.youtubeFilename).onChange((v) => ((s.youtubeFilename = v || "{{title}}"), save())));
+						},
+					},
+					{
+						name: "Transcribe the audio",
+						desc: "Transcribe the video's actual audio through your transcription provider instead of its auto-captions. More accurate for names and numbers, but it costs transcription credits and downloads the audio. Best-effort: it falls back to captions when the audio cannot be fetched. Off uses the free captions.",
+						help: "On, the video's audio is downloaded and run through your transcription provider, which gets names and numbers right where YouTube's auto-captions mangle them, at the cost of transcription credits and a short download. It quietly falls back to captions if the audio cannot be fetched. Off uses the free captions.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.youtubeTranscribeAudio).onChange((v) => ((s.youtubeTranscribeAudio = v), save())));
+						},
+					},
+					{
+						name: "YouTube sections",
+						desc: "Which sections a captured video's notes include. The defaults are tuned for video content (takeaways, facts, resources, quotes) rather than meeting minutes.",
+						help: "The checklist below picks which sections a captured video's note contains, kept separate from your meeting sections. The defaults lean toward video content (takeaways, facts, resources, quotes) instead of meeting minutes like decisions and action items.",
+					},
+					...extractionRows(
+						(k) => !!s.youtubeExtractions[k],
+						(k, v) => (s.youtubeExtractions[k] = v),
+						true
+					),
+				],
+			},
+			{
+				heading: "Capture from a link",
+				rows: [
+					intro(
+						'Paste a link and Power Assistant decides how to read it: a YouTube video uses its free captions, a video or social post is downloaded and transcribed, and anything else is read as a web page. Downloading needs yt-dlp, a separate free program; install it with "pip install yt-dlp". Reading a web page needs nothing extra.'
+					),
+					{
+						// The recognized sites as chips rather than a sentence. The question
+						// this list answers is "can I paste this?", and scanning a name out
+						// of a dozen beats reading a comma list to find it. The lock marks
+						// the ones that show a logged-out visitor nothing, since "supported"
+						// and "will work for you" are different promises for those three.
+						// not ptc-section-intro: that class hides the name, and this row
+						// wants one
+						name: "Recognized video and social sites",
+						help: "The sites a link capture reads as video or a social post rather than an article. Roughly 1,750 more work through Read it as > Video even when they are not listed here. A marked site serves almost nothing to a logged-out visitor, so those need the Cookies from browser setting before a capture will find anything.",
+						cls: "pcap-sites-row",
+						build: (st) => {
+							const chips = st.descEl.createDiv({ cls: "pcap-site-chips" });
+							for (const m of MEDIA_SITES) {
+								const chip = chips.createSpan({ cls: "pcap-site-chip" });
+								if (m.login) {
+									chip.addClass("is-login");
+									setIcon(chip.createSpan({ cls: "pcap-site-lock" }), "lock");
+								}
+								chip.createSpan({ text: m.label });
+							}
+							chips.createSpan({ cls: "pcap-site-chip is-more", text: "+ ~1,750 more" });
+							st.descEl.createDiv({
+								cls: "pcap-site-legend",
+								text: "Locked sites show a logged-out visitor almost nothing, so they need Cookies from browser below. Anything not listed is read as a web page; choose Video in the capture dialog to send it to yt-dlp instead.",
+							});
+						},
+					},
+					{
+						name: "yt-dlp path",
+						desc: "The full path to yt-dlp. Empty searches your PATH and then Python's module form, which is what a pip install usually leaves working. Use Check to see which one answers.",
+						help: "Where to find yt-dlp, the program that downloads a post's audio. Empty is normally right: it tries your PATH first, then runs it through Python, which covers a pip install that put the launcher somewhere PATH does not look. Set a full path only when Check cannot find it. Not needed at all for web pages.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Leave empty to search").setValue(s.ytDlpPath).onChange((v) => ((s.ytDlpPath = v.trim()), save())));
+							st.addButton((b) =>
+								b.setButtonText("Check").onClick(async () => {
+									b.setDisabled(true).setButtonText("Checking…");
+									try {
+										new Notice(`Power Assistant: yt-dlp ${await this.plugin.ytDlpVersion()} is working.`, 6000);
+									} catch (e) {
+										new Notice("Power Assistant: " + (e instanceof Error ? e.message : String(e)), 12000);
+									} finally {
+										b.setDisabled(false).setButtonText("Check");
+									}
+								})
+							);
+						},
+					},
+					{
+						// The one that should be enough: sign in here, in a window, the way
+						// you would sign in anywhere. Everything below it is for the cases
+						// this cannot reach.
+						name: "YouTube sign-in",
+						desc: "Checking…",
+						help: "YouTube increasingly answers a device it does not recognize with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does not help: a capture goes out from Obsidian and from yt-dlp, and neither can see your browser's cookies. This signs in here instead, and it never asks for your password. Google will not accept one typed into a window inside another app, which is a sensible rule and not one worth dodging, so this uses the flow built for devices in that position: the window opens YouTube's TV interface, you choose Sign in, and it shows a short code. Enter that code at youtube.com/activate in the browser you already trust (the arrow button opens it), approve, and the window is signed in. Then close it. The session is kept in this plugin's own store, separate from the rest of Obsidian, and is never written into your vault or into a note; when a capture needs it, it is handed to yt-dlp as a temporary file deleted the moment the download ends. Sign out clears the whole thing.",
+						build: (st) => {
+							// The label has to agree with the words beside it: a row saying a
+							// session is saved, next to a button saying Sign in, reads as a
+							// contradiction and sends you round the sign-in again for nothing.
+							let signedIn = false;
+							let openBtn: ButtonComponent | null = null;
+							const paint = async () => {
+								const cookies = await this.plugin.youtubeCookies();
+								if (!st.settingEl.isConnected) return; // the tab moved on while we looked
+								signedIn = cookies.length > 0;
+								// a count and a way to check, rather than a verdict: whether a
+								// session works is answered by YouTube, and Test asks it
+								st.setDesc(
+									signedIn
+										? `A YouTube session is saved (${cookies.length} cookies)${hasYoutubeLogin(cookies) ? ", signed in" : ""}. Captures use it. Test says whether it gets through.`
+										: "No session saved. Sign in here if YouTube says a video has no captions, or asks this device to confirm it is not a bot. No password is typed here: YouTube shows a code you approve in your own browser."
+								);
+								openBtn?.setButtonText(signedIn ? "Open YouTube" : "Sign in");
+								openBtn?.setTooltip(signedIn ? "Open the signed-in window again, to check it or switch account" : "Open YouTube's TV interface and pair a code");
+							};
+							void paint();
+							st.addButton((b) =>
+								b.setButtonText("Test").setTooltip("Ask YouTube for one video's title with this session. Downloads nothing.").onClick(async () => {
+									b.setDisabled(true).setButtonText("Testing…");
+									try {
+										const title = await this.plugin.youtubeReach();
+										new Notice(
+											title ? `Power Assistant: YouTube answered, “${title}”. Captures work.` : "Power Assistant: YouTube answered, but said nothing. Try again in a minute.",
+											8000
+										);
+									} catch (e) {
+										const m = e instanceof Error ? e.message : String(e);
+										new Notice(
+											/sign in|not a bot|cookies/i.test(m)
+												? "Power Assistant: YouTube still will not talk to this device" +
+														(signedIn ? ", even with the saved session. Tell Steve, the session works in the window but not for a download." : ". Sign in above.")
+												: "Power Assistant: " + m,
+											15000
+										);
+									} finally {
+										b.setDisabled(false).setButtonText("Test");
+									}
+								})
+							);
+							st.addButton((b) => {
+								openBtn = b;
+								b.setButtonText("Sign in").onClick(async () => {
+									b.setDisabled(true).setButtonText("Waiting…");
+									try {
+										await this.plugin.signInToYoutube();
+									} finally {
+										b.setDisabled(false);
+										void paint();
+									}
+								});
+							});
+							st.addExtraButton((b) =>
+								b
+									.setIcon("external-link")
+									.setTooltip("Open youtube.com/activate in your browser, to enter the code")
+									.onClick(() => window.open("https://www.youtube.com/activate"))
+							);
+							st.addExtraButton((b) =>
+								b
+									.setIcon("log-out")
+									.setTooltip("Sign out and forget the session")
+									.onClick(async () => {
+										await this.plugin.signOutOfYoutube();
+										void paint();
+									})
+							);
+						},
+					},
+					{
+						name: "Cookies from browser",
+						desc: "Only needed for Instagram, Facebook, and LinkedIn, which show almost nothing to a logged-out visitor. Everything else captures fine with this off. On Windows this often fails with Chrome and Edge; see the help.",
+						help: "Off by default, and off means the plugin never touches your browser. Turned on, yt-dlp reads that browser's cookie store at download time so gated sites see you as signed in. Nothing is copied into the vault or into the plugin's settings; the cookies are read per run. Two things to know before turning it on. It applies to every download, not just the gated sites, so your other captures would go out signed in as you when they do not need to be. And on Windows, Chrome and Edge encrypt their cookie stores in a way yt-dlp usually cannot read (Edge reports a DPAPI failure; Chrome also locks its database while it is running), so it may simply not work no matter how it is set. Firefox is the reliable one on Windows.",
+						build: (st) => {
+							st.addDropdown((d) => {
+								d.addOptions({ "": "Off", chrome: "Chrome", chromium: "Chromium", edge: "Edge", firefox: "Firefox", brave: "Brave" });
+								d.setValue(s.cookieBrowser).onChange((v) => ((s.cookieBrowser = (COOKIE_BROWSERS.includes(v as CookieBrowser) ? v : "") as CookieBrowser), save()));
+								d.selectEl.addClass("dropdown");
+							});
+						},
+					},
+					{
+						name: "Cookies file",
+						desc: "Full path to a cookies.txt exported from your browser. Used ahead of the setting above, and the one that works on Windows where reading Chrome or Edge directly does not. Being signed in to YouTube in your browser does not by itself reach a capture; see the help.",
+						help: "YouTube now answers an unrecognised device with \"Sign in to confirm you're not a bot\", and a capture then looks like a video with no captions. Being signed in to youtube.com in your browser does NOT fix this: a capture goes out from Obsidian and from yt-dlp, and neither shares your browser's cookie jar, as far as YouTube can tell, they are a stranger. What gets through is handing those programs a copy of the cookies. Reading them straight out of Chrome or Edge fails on Windows (both encrypt the store), so export a cookies.txt with a browser extension and point this at the file, then press Test YouTube. Keep the file outside your vault: it holds live sessions for whatever sites it covers, anyone with it is signed in as you, and a vault that syncs would carry it to every device and to your cloud folder. It is read at download time and never copied into a note or into these settings. Export it from a private window you close afterwards, so ordinary browsing does not rotate the session out from under it, and re-export when captures start failing again.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("C:\\Users\\you\\cookies.txt").setValue(s.cookieFile).onChange((v) => ((s.cookieFile = v.trim()), save())));
+						},
+					},
+					providerPick(
+						"media",
+						"Which provider transcribes a video or post's audio. These are usually one voice, so Whisper is normally the right call.",
+						() => s.mediaProvider,
+						(v) => (s.mediaProvider = v),
+						"A social post has no caption track, so this provider is always the one that reads it. Speaker labels rarely matter for a short clip, so the cheapest provider is usually the right one here. Web pages never reach this setting."
+					),
+					{
+						name: "Video and social folder",
+						desc: "Where captured videos and posts are written. {{site}} becomes X, TikTok, Reddit, and so on. Empty uses the output folder.",
+						help: "Where a captured video or post lands. Empty uses your main output folder. {{site}} fills in the source, so Social/{{site}} keeps X and TikTok in their own folders without a settings tab for each. Created if missing.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Sources/Social/{{site}}").setValue(s.mediaFolder).onChange((v) => ((s.mediaFolder = v.trim()), save())));
+						},
+					},
+					{
+						name: "Video and social filename",
+						desc: "{{title}} = the post's text, {{date}} = today, {{site}} = X, TikTok, and so on. Extension optional; defaults to .md.",
+						help: "The name pattern for a captured video or post. {{title}} is the post's own text trimmed to fit a filename, {{date}} is today, and {{site}} is the source. Add an extension or it defaults to .md.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("{{date}} {{title}}").setValue(s.mediaFilename).onChange((v) => ((s.mediaFilename = v || "{{date}} {{title}}"), save())));
+						},
+					},
+					{
+						name: "Video and social sections",
+						desc: "Which sections a captured video or post includes. The defaults are tuned for content (takeaways, facts, resources, quotes) rather than meeting minutes. A text-only post takes a shorter list; see the help.",
+						help: "The checklist below picks which sections a captured video or post contains, kept separate from your meeting, YouTube, and web sections. The defaults lean toward content (takeaways, facts, resources, quotes) instead of meeting minutes like decisions and action items. A post with no video is usually a sentence or two, and most of these sections have nothing to work with there, so a text-only post narrows to Summary, Key takeaways, and Keywords: the rest would only write \"None identified\" above the post itself. Switching one of those three off here switches it off there too; nothing is ever turned back on.",
+					},
+					...extractionRows(
+						(k) => !!s.mediaExtractions[k],
+						(k, v) => (s.mediaExtractions[k] = v),
+						true
+					),
+				],
+			},
+			{
+				heading: "Web pages",
+				rows: [
+					intro(
+						"Reading a web page costs no transcription: the page is fetched, reduced to its article, converted to Markdown, and extracted like anything else. Only the AI extraction costs anything, and that is optional too."
+					),
+					{
+						name: "Web folder",
+						desc: "Where captured pages are written. One folder is usually right here; see the help for why {{site}} suits social but not the web. Empty uses the output folder.",
+						help: "Where a captured page lands. Empty uses your main output folder. {{site}} works here, but it is rarely what you want: for social it is a dozen tidy labels like X and TikTok, while for a web page it comes from that page's own og:site_name, which is unbounded and often untidy (real examples: \"Wikimedia Foundation, Inc.\", \"Simon Willison's Weblog\"). That means a new folder per publication. One folder reads better, and the site is a property on every note, so a Base can still group by it. Created if missing.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Sources/Articles").setValue(s.webFolder).onChange((v) => ((s.webFolder = v.trim()), save())));
+						},
+					},
+					{
+						name: "Web filename",
+						desc: "{{title}} = the article's headline, {{date}} = today, {{site}} = the publication. Extension optional; defaults to .md.",
+						help: "The name pattern for a captured page. {{title}} is the article's headline, {{date}} is today, and {{site}} is the publication. Add an extension or it defaults to .md.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("{{date}} {{title}}").setValue(s.webFilename).onChange((v) => ((s.webFilename = v || "{{date}} {{title}}"), save())));
+						},
+					},
+					{
+						name: "Keep the article text",
+						desc: "Store the full article under an Article heading, below the AI notes. Off keeps only the notes and the link.",
+						help: "On, the whole article is saved into the note so it stays searchable, quotable, and readable after the page changes or disappears. This is separate from the transcript setting on purpose: a transcript is a by-product of transcribing, while an article is the thing itself. Off keeps only the AI sections and the source link.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.webIncludeArticle).onChange((v) => ((s.webIncludeArticle = v), save())));
+						},
+					},
+					{
+						name: "Web sections",
+						desc: "Which sections a captured page includes.",
+						help: "The checklist below picks which sections a captured page contains, kept separate from your other capture kinds. The defaults lean toward written content: summary, takeaways, facts, resources, and quotes.",
+					},
+					...extractionRows(
+						(k) => !!s.webExtractions[k],
+						(k, v) => (s.webExtractions[k] = v),
+						true
+					),
+				],
+			},
+			{
+				heading: "Documents",
+				rows: [
+					intro(
+						"Right-click an image or PDF and choose Process document: its text is read (Power Extract reads images; PDFs need nothing extra), the vendor, date, amount, and type are extracted, the file is renamed and filed by type and year, and a note with those properties lands beside it."
+					),
+					{
+						name: "Documents folder",
+						desc: "Where processed documents are filed, organized by type and year. Empty leaves files where they are and only writes the note.",
+						help: "The root a processed bill, receipt, or statement is moved into, sorted automatically by type and year (for example Documents/Bills/2026). Empty leaves the original file where it sits and only writes the note beside it. Filing rules below can override this per document.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Documents").setValue(s.docsFolder).onChange((v) => ((s.docsFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Documents inbox",
+						desc: "Watched folder: an image or PDF dropped here is processed and filed automatically. Empty turns the watcher off.",
+						help: "A drop zone for documents: an image or PDF you move here is OCR'd, its vendor, date, amount, and type extracted, and it is filed and noted without a right-click. Empty turns the watcher off so documents are only processed when you ask.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Documents/Inbox").setValue(s.docInbox).onChange((v) => ((s.docInbox = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Filing rules",
+						desc: "Route and tag documents by their extracted fields. The first matching rule wins; its folder (with {year}, {type}, {vendor}) overrides the default, and its tags add to the extracted ones. No match keeps filing by type and year.",
+						help: "Rules that route and tag documents by what was extracted, for example send anything from Meralco to Utilities/{year} and tag it electricity. The first matching rule wins; its folder overrides the default and its tags add to the extracted ones. With no match, filing falls back to type and year.",
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("Add rule").setCta().onClick(() => {
+									new DocRuleModal(this.app, {}, (rule) => {
+										s.docRules.push(rule);
+										save();
+										this.refresh();
+									}).open();
+								})
+							);
+						},
+					},
+					listRow(["filing rules", "documents"], (el) => {
+						s.docRules.forEach((rule, i) => {
+							const st = new Setting(el)
+								.setName(docRuleSummary(rule))
+								.addExtraButton((b) =>
+									b.setIcon("pencil").setTooltip("Edit").onClick(() => new DocRuleModal(this.app, rule, (edited) => ((s.docRules[i] = edited), save(), this.refresh())).open())
+								)
+								.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete").onClick(() => (s.docRules.splice(i, 1), save(), this.refresh())));
+							this.addHelp(
+								st,
+								"A saved filing rule. Incoming documents are checked against the rules top to bottom and the first match wins; the pencil edits its conditions and destination, the trash removes it."
+							);
+						});
+					}),
+				],
+			},
+		];
+
+		// ----------------------------------------------------------------- Mail
+
+		// Power Desk may not have loaded yet when these definitions are first
+		// built, so this is a question asked at render rather than an answer
+		// captured here
+		const mailReady = () => this.plugin.mailFeedAvailable();
+
+		const mail: Group[] = [
+			{
+				heading: "Import a mail folder",
+				rows: [
+					intro(
+						"Turn a folder you already curate (a work folder, a project folder) into notes you can ask questions about. Each back-and-forth becomes ONE note holding the newest message, whose quoted history carries the rest of the thread, so a twenty-message exchange is one note rather than twenty copies of the same text. Run it from the command palette: \"Import a mail folder as notes\"."
+					),
+					{
+						name: "Folder for imported mail",
+						desc: "Each mail folder becomes a subfolder here. Empty turns import off. Point it at a Power Connect encrypted folder to keep work mail encrypted on Dropbox.",
+						help: "Imported exchanges land in <folder>/<mail folder name>. A conversation already imported is updated in place as it grows, so an active thread stays one note.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Email").setValue(s.mailImportFolder).onChange((v) => ((s.mailImportFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Only Focused mail",
+						desc: "Skip what Outlook classified as Other. That verdict is Microsoft's own, already learned from how you treat your mail, and it costs nothing to use.",
+						help: "Outlook's Focused/Other split rides along with every message. An allow rule for a sender overrides this, so a newsletter you actually want is still kept.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.mailImportFocusedOnly).onChange((v) => ((s.mailImportFocusedOnly = v), save())));
+						},
+					},
+					{
+						name: "Skip near-empty exchanges",
+						liveDesc: () => `Drop an exchange whose newest message is under ${s.mailImportMinChars} characters ("thanks!", read receipts). 0 keeps everything.`,
+						help: "Drops an exchange whose newest message is barely there: a one-word reply, a read receipt, an acknowledgement. These carry no information worth searching and would otherwise sit in the corpus diluting real results. Set it to 0 to keep everything regardless of length.",
+						build: (st) => {
+							st.addSlider((sl) => sl.setLimits(0, 300, 10).setValue(s.mailImportMinChars).onChange((v) => ((s.mailImportMinChars = v), save())));
+						},
+					},
+					{
+						name: "Messages read per import",
+						liveDesc: () => `Read at most ${s.mailImportCap} messages from a folder in one run.`,
+						help: "How many messages one import reads from a folder before stopping. A bound rather than a target: a folder holding years of mail would otherwise fetch all of it in a single run. Raise it for a deep backfill, then leave it lower for the routine top-ups.",
+						build: (st) => {
+							st.addSlider((sl) => sl.setLimits(100, 5000, 100).setValue(s.mailImportCap).onChange((v) => ((s.mailImportCap = v), save())));
+						},
+					},
+					{
+						name: "Sender rules",
+						desc: "Block a sender to skip it, or allow one to keep it even when Outlook calls it Other. Run \"Scan senders\" on a folder first to see who actually fills it.",
+						help: "Matched against the sender's name, address, and domain. A block rule always wins over an allow rule, and an empty rule never matches so it cannot become a catch-all.",
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("Add rule").setCta().onClick(() => {
+									s.mailImportRules.push({ match: "", block: true, enabled: true });
+									save();
+									this.refresh();
+								})
+							);
+						},
+					},
+					listRow(["sender rules", "block", "allow"], (el) => {
+						s.mailImportRules.forEach((rule, i) => {
+							new Setting(el)
+								.setName(rule.block ? "Block" : "Allow")
+								.addText((t) =>
+									t
+										.setPlaceholder("name, address, or domain")
+										.setValue(rule.match)
+										.onChange((v) => ((s.mailImportRules[i].match = v.trim()), save()))
+								)
+								.addDropdown((d) =>
+									d
+										.addOptions({ block: "Block", allow: "Allow" })
+										.setValue(rule.block ? "block" : "allow")
+										.onChange((v) => ((s.mailImportRules[i].block = v === "block"), save(), this.refresh()))
+								)
+								.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete").onClick(() => (s.mailImportRules.splice(i, 1), save(), this.refresh())));
+						});
+					}),
+				],
+			},
+			{
+				heading: "Ask your email",
+				rows: [
+					intro(
+						"A rolling window of your recent email, indexed locally so “Ask your vault” can answer from it (“what did the electric bill run last month”, “what did Dana send about the contract”). Nothing becomes a note and nothing syncs: the index lives in this plugin's folder and rebuilds from the mailbox. Needs Power Desk with a mailbox connected."
+					),
+					{
+						name: "Mail search window (days)",
+						liveDesc: () =>
+							mailReady()
+								? "How many days of recent email to keep searchable. 0 turns it off. Larger windows index more mail but cost more memory. The window only reaches as far back as Power Desk has listed, so very old mail may not appear until it is opened."
+								: "Install Power Desk and connect a mailbox to search your email here.",
+						help: "The index is keyword search over stripped message text, the same engine Ask uses for notes. Each message contributes its subject, sender, and the head of its body. Turning this to 0 clears it on the next launch.",
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("0")
+									.setValue(String(s.mailWindowDays || ""))
+									.onChange((v) => {
+										const n = parseInt(v, 10);
+										s.mailWindowDays = isFinite(n) && n > 0 ? Math.min(n, 365) : 0;
+										save();
+									})
+							);
+						},
+					},
+					{
+						name: "Indexed now",
+						// the window fills as Power Desk fetches, so the summary is read
+						// on every render rather than trusted from build time
+						liveDesc: () => this.plugin.mailWindowSummary(),
+						help: "How much mail is currently searchable and how far back it reaches. The window only holds what Power Desk has already fetched, so if this looks short, raise Power Desk's mail history and messages-per-folder first, then refresh here.",
+						visible: () => mailReady() && s.mailWindowDays > 0,
+						build: (st) => {
+							st.addButton((b) => b.setButtonText("Refresh now").onClick(() => void this.plugin.refreshMailWindow().then(() => this.refresh())));
+						},
+					},
+				],
+			},
+		];
+
+		// ------------------------------------------------------------- Spending
+
+		const spending: Group[] = [
+			{
+				heading: "Transactions",
+				rows: [
+					intro(
+						"Order confirmations and bills become notes: one per order, plus one per line item so spending reports by category. Power Desk watches your mailboxes and hands matching messages over; the Spending base and rollup read what lands. Amounts are checked against the totals the vendor printed, and anything that does not add up is flagged rather than trusted."
+					),
+					{
+						name: "Transactions folder",
+						desc: "Root for captured orders and line items, each under a year folder. Empty turns transaction capture off.",
+						help: "Where captured purchases live: orders land in <folder>/Orders/<year> and their line items in <folder>/Items/<year>. Line items are separate notes so a mixed order reports correctly by category. Empty turns capture off entirely.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Finance").setValue(s.txnFolder).onChange((v) => ((s.txnFolder = cleanFolderPath(v)), save())));
+						},
+					},
+					{
+						name: "Mail rules",
+						desc: "Which incoming messages are captured. The first matching rule wins. Match the sender's real domain: bills often arrive from a mailing service rather than the company's own website.",
+						help: "Rules deciding which messages become transactions, checked top to bottom with the first match winning. A rule can also override the vendor name and mark a sender as business spending, which keeps company purchases out of the household rollup.",
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("Add rule").setCta().onClick(() => {
+									new TxnRuleModal(this.app, {}, (rule) => {
+										s.txnRules.push(rule);
+										save();
+										this.refresh();
+									}).open();
+								})
+							);
+						},
+					},
+					listRow(["mail rules", "transactions", "vendors"], (el) => {
+						s.txnRules.forEach((rule, i) => {
+							const st = new Setting(el)
+								.setName(txnRuleSummary(rule))
+								.addExtraButton((b) =>
+									b.setIcon("pencil").setTooltip("Edit").onClick(() => new TxnRuleModal(this.app, rule, (edited) => ((s.txnRules[i] = edited), save(), this.refresh())).open())
+								)
+								.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete").onClick(() => (s.txnRules.splice(i, 1), save(), this.refresh())));
+							this.addHelp(st, "A saved mail rule. The pencil edits its conditions and overrides, the trash removes it.");
+						});
+					}),
+					{
+						name: "Captured messages",
+						// the ledger grows as mail is captured, so the count is read on
+						// every render rather than trusted from build time
+						liveDesc: () =>
+							`${s.txnSeen.length} message${s.txnSeen.length === 1 ? "" : "s"} already captured and skipped on future scans. Clearing this lets them be captured again.`,
+						help: "The ledger of message ids already turned into notes, which is what stops a re-scan from counting the same order twice. Clear it only if you deleted the notes and want them rebuilt.",
+						build: (st) => {
+							st.addButton((b) => b.setButtonText("Clear").onClick(() => (s.txnSeen = [], save(), this.refresh())));
+						},
+					},
+				],
+			},
+		];
+
+		// --------------------------------------------------------------- Search
+
+		const search: Group[] = [
+			{
+				heading: "Ask your vault",
+				rows: [
+					{
+						name: "Folders to index",
+						desc: "Comma-separated folders whose notes can be asked about. Use / to index the entire vault; leave empty for just the output folder. Changes re-index automatically.",
+						help: "The folders whose notes Ask your vault and the assistant chat can search, comma-separated. Use / for the whole vault, or leave it empty for just the output folder. The index rebuilds itself as you edit, so changes take effect without a restart.",
+						build: (st) => {
+							st.addText((t) =>
+								t.setValue(s.indexFolders).onChange((v) => {
+									s.indexFolders = v;
+									save();
+									void this.plugin.syncIndex(false);
+								})
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "Semantic search",
+				rows: [
+					intro(
+						"Optional: find notes by meaning, not just keywords, by embedding them through an OpenAI-compatible endpoint. Point it at local Ollama (http://localhost:11434/v1, model nomic-embed-text) to keep everything on your machine, or a hosted provider. Leave the endpoint empty to use keyword search only. Ask and the assistant chat blend keyword and meaning when this is on."
+					),
+					{
+						name: "Embeddings endpoint",
+						desc: "OpenAI-compatible base URL. Empty turns semantic search off.",
+						help: "The OpenAI-compatible URL used to turn notes into vectors for meaning-based search. Point it at local Ollama to keep everything on your machine, or a hosted provider. Empty turns semantic search off, and Ask falls back to keyword matching.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("http://localhost:11434/v1").setValue(s.embeddingsEndpoint).onChange((v) => ((s.embeddingsEndpoint = v.trim()), save())));
+						},
+					},
+					{
+						name: "Embeddings API key",
+						desc: "Leave empty for local endpoints like Ollama.",
+						help: "The key for the embeddings endpoint. Leave it empty for a local server like Ollama that needs none; a hosted provider will require one. Stored locally and sent only to that endpoint.",
+						build: (st) => {
+							st.addText((t) => t.setValue(s.embeddingsKey).onChange((v) => ((s.embeddingsKey = v.trim()), save())));
+						},
+					},
+					{
+						name: "Embeddings model",
+						desc: "Changing this rebuilds all embeddings (a different model is a different vector space).",
+						help: "Which embedding model turns your notes into vectors, for example nomic-embed-text on Ollama. Changing it rebuilds every embedding, because a different model produces a different, incompatible vector space.",
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("nomic-embed-text").setValue(s.embeddingsModel).onChange((v) => ((s.embeddingsModel = v.trim() || "nomic-embed-text"), save())));
+						},
+					},
+					{
+						name: "Test the endpoint",
+						desc: "Embed one sentence and report the vector size. Every failure here is otherwise silent: search just stays keyword-only with no explanation.",
+						help: "Sends a single short string to the endpoint and reports what came back. Use it after setting the endpoint or changing the model, before building embeddings over the whole vault.",
+						build: (st) => {
+							st.addButton((b) => b.setButtonText("Test").onClick(() => void this.plugin.verifyEmbeddings()));
+						},
+					},
+					{
+						name: "Build embeddings",
+						desc: "Embed the indexed notes now (also runs quietly on launch). Re-run after changing the model.",
+						help: "Embeds your indexed notes right now instead of waiting for the quiet pass that runs on launch. Use it after you first set an endpoint or change the model, so meaning-based search covers everything.",
+						build: (st) => {
+							st.addButton((b) =>
+								b.setButtonText("Build now").onClick(() => {
+									if (!this.plugin.semanticEnabled()) {
+										new Notice("Power Assistant: set an embeddings endpoint first.");
+										return;
+									}
+									void this.plugin.syncEmbeddings(true);
+								})
+							);
+						},
+					},
+				],
+			},
+		];
+
+		// ---------------------------------------------------------------- Notes
+
+		const notes: Group[] = [
+			{
+				heading: "Last edited, on the page",
+				rows: [
+					{
+						// Said up front rather than as a footnote on each row: with Power
+						// Editor installed these three settings change nothing, and a
+						// setting that silently does nothing is worse than one that says
+						// why. Asked on every render, since Power Editor can be installed
+						// or removed without this tab hearing about it.
+						...intro(""),
+						liveDesc: () =>
+							this.plugin.editedStampMine()
+								? "A quiet \"Edited 3 minutes ago\" line on the note itself, read from the file's own modified time. A note's own `updated:` (or `modified:`) property wins over that where it exists, which matters in a synced vault: the sync client can rewrite a file's modified time when a note arrives from another device and make it look freshly edited."
+								: "Power Editor is installed, and it draws this line, so these settings are not in use here. Power Editor's own copy of them is what to change. They take over again if it is ever removed.",
+					},
+					{
+						name: "Show when the note was last edited",
+						desc: "A quiet line under the note's title: “Edited 3 minutes ago”. Click it to swap between the relative time and the exact date.",
+						help: "Reads the file's own modified time, so it is right without you maintaining anything. If a note has an `updated:` (or `modified:`) property in its frontmatter, that wins instead, useful in a synced vault, where the sync client can rewrite the file's modified time when a note arrives from another device and make it look freshly edited.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOption("labeled", "Yes, with the word Edited")
+									.addOption("bare", "Yes, just the time")
+									.addOption("off", "Off")
+									.setValue(s.showEdited)
+									.onChange((v) => {
+										s.showEdited = v as PowerAssistantSettings["showEdited"];
+										save();
+										this.plugin.refreshEditedStamps();
+									})
+							);
+						},
+					},
+					{
+						name: "Where to show it",
+						desc: "Under the note's title, at the very end of the note, or in both places.",
+						help: "Under the title is the Notion habit: you see it as you arrive. The line variant is the same spot pulled tight against the title with a hairline drawn between them, so the title and the date read as one page header instead of as two stray lines above your first paragraph. At the end is closer to 1Password, where the detail sits out of the way until you go looking. Both is fine on long notes, where the title has scrolled away by the time you wonder.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOption("title", "Under the title")
+									.addOption("rule", "Under the title, with a line above it")
+									.addOption("bottom", "At the end of the note")
+									.addOption("both", "Both")
+									.setValue(s.editedPosition)
+									.onChange((v) => {
+										s.editedPosition = v as PowerAssistantSettings["editedPosition"];
+										save();
+										this.plugin.refreshEditedStamps();
+									})
+							);
+						},
+					},
+					{
+						name: "Time format",
+						desc: "How the time itself reads.",
+						help: "Relative answers 'is this stale?' at a glance; exact answers 'which version is this?'. Whichever you pick, clicking the stamp shows both for that note until you click it again, and hovering always shows the exact time.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOption("relative", "Relative (3 minutes ago)")
+									.addOption("exact", "Exact date and time")
+									.addOption("both", "Relative, then the exact date")
+									.setValue(s.editedFormat)
+									.onChange((v) => {
+										s.editedFormat = v as PowerAssistantSettings["editedFormat"];
+										save();
+										this.plugin.refreshEditedStamps();
+									})
+							);
+						},
+					},
+				],
+			},
+		];
+
+		// -------------------------------------------------------------- Privacy
+
+		const privacy: Group[] = [
+			{
+				heading: "AI usage",
+				rows: [
+					intro(
+						"Every Claude call and every stretch of transcription is logged locally, so the usage meter can total what this vault is spending. Nothing leaves your machine: the meter reads that log, not your provider accounts."
+					),
+					{
+						name: "Log AI usage",
+						desc: "Record each AI call so the meter can total it. Turning this off stops logging; whatever is already recorded stays.",
+						help: "Each Claude call logs its model and the token counts the API reports back; each transcription logs its provider and audio length. The meter turns those into an estimated cost and keeps the two apart, because they are two different bills. These are estimates from published rates, not invoices: your billed Claude total lives in the Anthropic Console, and transcription is billed by your provider.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.usageMeterEnabled).onChange((v) => ((s.usageMeterEnabled = v), save())));
+						},
+					},
+					{
+						name: "Usage meter",
+						// the ledger grows with every AI call, so the count is read on
+						// every render rather than trusted from build time
+						liveDesc: () => `Open the meter in the sidebar. ${s.usageLedger.length} call${s.usageLedger.length === 1 ? "" : "s"} recorded so far.`,
+						help: "Opens the running tally of what this vault has spent on AI and transcription, split by feature and provider. These are estimates from published rates rather than invoices: the billed figure lives in your provider's own console, and this is for spotting which feature is costing what.",
+						build: (st) => {
+							st.addButton((b) => b.setButtonText("Open").setCta().onClick(() => void this.plugin.openUsageMeter()));
+							st.addButton((b) =>
+								this.destructive(b)
+									.setButtonText("Reset")
+									.onClick(() => {
+										s.usageLedger = [];
+										save();
+										this.refresh();
+										new Notice("Power Assistant: usage ledger cleared.");
+									})
+							);
+						},
+					},
+				],
+			},
+			{
+				heading: "Sharing & privacy",
+				rows: [
+					{
+						name: "Redact sensitive info when sharing",
+						desc: "Mask matches when you Copy summary or Export to Word. Never changes the note itself. There's also a one-off 'Copy redacted summary' command.",
+						help: "Masks matches only when you Copy summary or Export to Word, never in the note itself, so the vault keeps the full text while what leaves your machine is scrubbed. Turning it on reveals which categories to mask. There is also a one-off Copy redacted summary command.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.redactShare).onChange((v) => ((s.redactShare = v), save(), this.refresh())));
+						},
+					},
+					...(
+						[
+							["Mask email addresses", () => s.redactEmails, (v: boolean) => (s.redactEmails = v), "Replaces anything shaped like an email address with [redacted] in shared copies."],
+							["Mask phone numbers", () => s.redactPhones, (v: boolean) => (s.redactPhones = v), "Replaces phone-number patterns with [redacted] in shared copies."],
+							["Mask SSNs", () => s.redactSsns, (v: boolean) => (s.redactSsns = v), "Replaces US Social Security number patterns with [redacted] in shared copies."],
+							["Mask card numbers", () => s.redactCards, (v: boolean) => (s.redactCards = v), "Replaces long card-number-like digit runs with [redacted] in shared copies."],
+							[
+								"Mask attendee names",
+								() => s.redactAttendees,
+								(v: boolean) => (s.redactAttendees = v),
+								"Replaces the meeting's attendee names with [redacted] in shared copies, header included, so a recap can go out without naming who was there.",
+							],
+						] as [string, () => boolean, (v: boolean) => void, string][]
+					).map(
+						([name, get, set, hint]): Row => ({
+							name,
+							help: hint,
+							visible: () => s.redactShare,
+							build: (st) => {
+								st.addToggle((t) => t.setValue(get()).onChange((v) => (set(v), save())));
+							},
+						})
+					),
+					{
+						name: "Also redact these terms",
+						desc: "Comma-separated names or words to mask (whole-word, case-insensitive).",
+						help: "Extra names or words to mask, comma-separated, matched whole-word and case-insensitively so a term never clips the middle of another word. Use it for client names, project code names, or anything else specific to you.",
+						visible: () => s.redactShare,
+						build: (st) => {
+							st.addText((t) => t.setPlaceholder("Acme, Project X").setValue(s.redactTerms).onChange((v) => ((s.redactTerms = v), save())));
+						},
+					},
+				],
+			},
+		];
+
+		return [
+			{ id: "setup", label: "Setup", groups: setup },
+			{ id: "audio", label: "Audio", groups: audio },
+			{ id: "meetings", label: "Meetings", groups: meetings },
+			{ id: "capture", label: "Capture", groups: capture },
+			{ id: "mail", label: "Mail", groups: mail },
+			{ id: "spending", label: "Spending", groups: spending },
+			{ id: "search", label: "Search", groups: search },
+			{ id: "notes", label: "Notes", groups: notes },
+			{ id: "privacy", label: "Privacy", groups: privacy },
+		];
 	}
 }
