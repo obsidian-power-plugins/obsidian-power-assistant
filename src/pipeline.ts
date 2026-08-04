@@ -978,7 +978,7 @@ export function extractYoutubeInfo(html: string): YoutubeInfo {
 	const jsonStr = (m: RegExpMatchArray | null): string | undefined => {
 		if (!m) return undefined;
 		try {
-			return JSON.parse(`"${m[1]}"`);
+			return JSON.parse(`"${m[1]}"`) as string;
 		} catch {
 			return undefined;
 		}
@@ -1011,7 +1011,7 @@ export function extractYoutubeMeta(html: string): YoutubeMeta | null {
 	if (!cm) return null;
 	let tracks: { baseUrl: string; languageCode?: string }[];
 	try {
-		tracks = JSON.parse(cm[1]);
+		tracks = JSON.parse(cm[1]) as { baseUrl: string; languageCode?: string }[];
 	} catch {
 		return null;
 	}
@@ -1925,7 +1925,7 @@ export function parseWebMeta(html: string): WebInfo & { title: string } {
 	const pub = meta("article:published_time") ?? meta("og:article:published_time") ?? meta("article:modified_time") ?? meta("date") ?? meta("datePublished");
 	const d = (pub ?? "").match(/^(\d{4}-\d{2}-\d{2})/);
 	if (d) out.published = d[1];
-	return out as WebInfo & { title: string };
+	return out;
 }
 
 /* ---------------- sharing a page outside the vault ---------------- */
@@ -2106,8 +2106,8 @@ export function cleanArticleMarkdown(md: string, title: string): string {
 
 function decodeXmlEntities(s: string): string {
 	return s
-		.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
-		.replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+		.replace(/&#(\d+);/g, (_: string, n: string) => String.fromCodePoint(+n))
+		.replace(/&#x([0-9a-fA-F]+);/g, (_: string, n: string) => String.fromCodePoint(parseInt(n, 16)))
 		.replace(/&quot;/g, '"')
 		.replace(/&apos;/g, "'")
 		.replace(/&lt;/g, "<")
@@ -2197,7 +2197,7 @@ export class SearchIndex {
 			this.totalLen += tokens.length;
 			for (const t of tokens) {
 				let post = this.postings.get(t);
-				if (!post) this.postings.set(t, (post = new Map()));
+				if (!post) this.postings.set(t, (post = new Map<number, number>()));
 				post.set(id, (post.get(id) ?? 0) + 1);
 			}
 			ids.push(id);
@@ -4353,7 +4353,7 @@ export function reviewSpeakerClusters(
 		for (const [t, m] of matched) {
 			const letter = moves?.get(t) ?? t.speaker;
 			let per = by.get(letter);
-			if (!per) by.set(letter, (per = new Map()));
+			if (!per) by.set(letter, (per = new Map<string, { seconds: number; turns: TurnEmbedding[]; score: number }>()));
 			let e = per.get(m.person);
 			if (!e) per.set(m.person, (e = { seconds: 0, turns: [], score: 0 }));
 			e.seconds += t.seconds;
@@ -5127,7 +5127,7 @@ export function humanizeError(msg: string): string {
 	const brace = msg.indexOf("{");
 	if (brace >= 0) {
 		try {
-			const j = JSON.parse(msg.slice(brace));
+			const j = JSON.parse(msg.slice(brace)) as { message?: string; error?: { message?: string; error?: { message?: string } } };
 			const inner = j?.error?.message ?? j?.message ?? j?.error?.error?.message;
 			if (typeof inner === "string" && inner.trim()) return inner.trim();
 		} catch {
@@ -5210,7 +5210,7 @@ export function formatSummaryForClipboard(md: string): string {
 	let body = md.replace(/^---\n[\s\S]*?\n---\n/, "");
 	body = body.replace(/\n## (Screens|Moments|Transcript)\b[\s\S]*$/m, "\n");
 	body = body.replace(/^!\[\[[^\]]*\]\]\s*$/gm, "");
-	body = body.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_m, a, b) => (b || a).trim());
+	body = body.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_m: string, a: string, b?: string) => (b || a).trim());
 	return body.replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
@@ -5699,7 +5699,7 @@ export function editedAt(fm: Record<string, unknown> | undefined, mtime: number)
 	for (const key of ["updated", "modified", "last-edited"]) {
 		const v = fm?.[key];
 		if (typeof v === "string" || typeof v === "number") {
-			const t = new Date(v as string).getTime();
+			const t = new Date(v).getTime();
 			if (Number.isFinite(t) && t > 0) return t;
 		}
 	}

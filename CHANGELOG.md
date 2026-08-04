@@ -12,6 +12,8 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 ### Changed
 
 - The README lists what the community catalog's scan reports about this plugin, what each one is actually for, and where in the source to check it: starting yt-dlp, listing vault files, reading and writing the clipboard, and the temporary files written outside the vault.
+- **The stylesheet no longer asks `:has()` questions the code can answer as it draws.** Four of them stood over the whole note for the life of the session: whether a turn held a highlight, whether a blank line sat above a speaker, whether an embed held audio, whether a stamp followed the title. Each is now a class set at the moment the answer changes, which is also what the community catalog asks plugins to do. The settings page does the same for the rows that span both columns, in place of eight more. Nothing looks different.
+- The three Node modules this reaches for on desktop (the filesystem, yt-dlp's launcher, and the temp directory) are imported once at startup behind the platform check rather than required where they are used, and the TypeScript config names the node types, so the whole of that code is type-checked rather than passing through as `any`.
 
 ## 1.89.12
 

@@ -161,8 +161,8 @@ export function decodeEntities(s: string): string {
 		euro: "€",
 	};
 	return s
-		.replace(/&#x([0-9a-f]+);/gi, (_, h) => safeCodePoint(parseInt(h, 16)))
-		.replace(/&#(\d+);/g, (_, d) => safeCodePoint(parseInt(d, 10)))
+		.replace(/&#x([0-9a-f]+);/gi, (_: string, h: string) => safeCodePoint(parseInt(h, 16)))
+		.replace(/&#(\d+);/g, (_: string, d: string) => safeCodePoint(parseInt(d, 10)))
 		.replace(/&([a-z]+);/gi, (m, n: string) => named[n.toLowerCase()] ?? m);
 }
 
@@ -653,7 +653,7 @@ export interface ParsedEmail {
 export function decodeQuotedPrintable(s: string): string {
 	return s
 		.replace(/=(?:\r\n|\n|\r)/g, "")
-		.replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+		.replace(/=([0-9A-Fa-f]{2})/g, (_: string, h: string) => String.fromCharCode(parseInt(h, 16)));
 }
 
 /** Decode base64 to a byte-per-character string in whichever runtime this is:

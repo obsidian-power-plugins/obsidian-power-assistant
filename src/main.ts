@@ -81,6 +81,45 @@ interface ElectronBits {
 	};
 }
 
+/** Mark the turns that carry no highlight, so Highlights-only can hide them.
+ *
+ *  The stylesheet used to ask each paragraph whether it held a mark, which is a
+ *  :has() query standing over the whole transcript for as long as the note is
+ *  open. The answer only changes when the turns are rendered or when the filter
+ *  is switched on, so it is read at both of those moments instead. */
+function markUnhighlightedTurns(callout: HTMLElement) {
+	for (const p of Array.from(callout.querySelectorAll<HTMLElement>(".callout-content > p"))) {
+		p.toggleClass("pa-tr-nohl", !p.querySelector("mark"));
+	}
+}
+
+/** The controls that earn a settings row the full width of the two-column
+ *  layout: anything you type into, drag, or pick from wants the room, while a
+ *  toggle or a button is happy beside its neighbour. */
+const WIDE_CONTROLS = 'input[type="text"], input[type="password"], input[type="search"], input[type="number"], input[type="range"], textarea, select, .slider';
+
+/** One mail folder the importer offers. Named rather than written inline, so
+ *  the modal's rows and the importer's promise are the same type rather than
+ *  two spellings of it. */
+interface MailFolderRow {
+	accountId: string;
+	accountName: string;
+	id: string;
+	name: string;
+	path: string;
+}
+
+/** The corner of pdf.js that reading a PDF's text needs. Obsidian bundles the
+ *  library and hands it over untyped, so the shape is named here. */
+interface PdfJsLike {
+	getDocument(src: { data: ArrayBuffer }): { promise: Promise<PdfDocLike> };
+}
+
+interface PdfDocLike {
+	numPages?: number;
+	getPage(n: number): Promise<{ getTextContent(): Promise<{ items: { str?: string }[] }> }>;
+}
+
 interface YoutubeSession {
 	cookies: { get(filter: { domain?: string }): Promise<unknown[]> };
 	clearStorageData(): Promise<void>;
@@ -1017,6 +1056,8 @@ export default class PowerAssistantPlugin extends Plugin {
 	refreshSettingsTab: (() => void) | null = null;
 	/** Held so a not-connected notice can open settings on a specific tab. */
 	private settingTab: AssistantSettingTab | null = null;
+	/** The Node modules, on desktop, once loadNodeModules() has been through. */
+	private node: { fs: typeof import("node:fs"); cp: typeof import("node:child_process"); os: typeof import("node:os") } | null = null;
 	/** Guards against two overlapping device-code sign-in flows. */
 	private graphConnecting = false;
 	index = new SearchIndex();
@@ -1054,6 +1095,10 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		// before anything that records, captures, or sweeps: those all ask for a
+		// Node module and take null for an answer, which is the wrong answer on a
+		// desktop that simply had not finished loading them yet
+		await this.loadNodeModules();
 		this.settingTab = new AssistantSettingTab(this.app, this);
 		this.addSettingTab(this.settingTab);
 
@@ -1203,7 +1248,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			name: "Refresh this post's counts",
 			checkCallback: (checking) => {
 				const f = this.app.workspace.getActiveFile();
-				const fm = f ? (this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) : undefined;
+				const fm = f ? (this.app.metadataCache.getFileCache(f)?.frontmatter) : undefined;
 				const ok = !!f && !!refreshableSource(fm);
 				if (!checking && ok) void this.refreshPostStats(f);
 				return ok;
@@ -1463,7 +1508,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				| { type?: string; tags?: unknown; parts?: number[] }
 				| undefined;
 			if (!isCaptureNote(fm)) return;
-			decorateStamps(el, partOffsetsOf(fm as Record<string, unknown>));
+			decorateStamps(el, partOffsetsOf(fm));
 			enhanceTranscriptCallout(
 				el,
 				(name) => this.speakerColorFor(name),
@@ -1562,7 +1607,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				if (!isCaptureNote(fm)) return;
 				// only a captured post has counts to re-read, so this is offered on one
 				// and not on a recorded meeting
-				if (refreshableSource(fm as Record<string, unknown>)) {
+				if (refreshableSource(fm)) {
 					menu.addItem((i) =>
 						i.setTitle("Refresh this post's counts").setIcon("refresh-cw").onClick(() => void this.refreshPostStats(af))
 					);
@@ -2271,7 +2316,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			let worked = 0;
 			const queued: { note: TFile; fm: Record<string, unknown>; recordings: string[] }[] = [];
 			for (const f of this.app.vault.getMarkdownFiles()) {
-				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 				const state = pendingState(fm, Date.now());
 				if (state !== "pending" && state !== "stale") continue;
 				if (!fm || !Array.isArray(fm["pa-recordings"])) continue; // a claim stub, not a queued meeting
@@ -2351,7 +2396,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			return false;
 		}
 		await sleep(CLAIM_SETTLE_MS);
-		const fm = this.app.metadataCache.getFileCache(note)?.frontmatter as Record<string, unknown> | undefined;
+		const fm = this.app.metadataCache.getFileCache(note)?.frontmatter;
 		return fm?.["pa-status"] === "processing" && fm?.["pa-claimed"] === this.deviceName();
 	}
 
@@ -2369,10 +2414,10 @@ export default class PowerAssistantPlugin extends Plugin {
 	private queuedRecordingPaths(): Set<string> {
 		const out = new Set<string>();
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm: Record<string, unknown> | undefined = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			const rec = fm?.["pa-recordings"];
 			if (!Array.isArray(rec)) continue;
-			for (const p of rec) if (typeof p === "string") out.add(p);
+			for (const p of rec as unknown[]) if (typeof p === "string") out.add(p);
 		}
 		return out;
 	}
@@ -2460,7 +2505,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		let working = 0;
 		const blocked: { name: string; reason: string }[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			if (!Array.isArray(fm?.["pa-recordings"])) continue; // a claim stub, not a queued meeting
 			const state = pendingState(fm, Date.now());
 			if (state === "pending" || state === "stale") pending++;
@@ -2902,7 +2947,8 @@ export default class PowerAssistantPlugin extends Plugin {
 		const md = await this.app.vault.read(file);
 		// a captured page already knows where it came from, and the reader will
 		// want the original rather than a note they cannot open
-		const source = this.app.metadataCache.getFileCache(file)?.frontmatter?.source;
+		const fm: Record<string, unknown> | undefined = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const source = fm?.source;
 		new SharePageModal(this.app, this, file, md, typeof source === "string" && /^https?:\/\//i.test(source) ? source : "").open();
 	}
 
@@ -3028,31 +3074,41 @@ export default class PowerAssistantPlugin extends Plugin {
 	/* ---- crash-safe partial: every chunk also lands on disk, so an Electron
 	 * crash mid-meeting costs nothing. Desktop only; removed on clean stop. ---- */
 
-	private nodeFs(): typeof import("node:fs") | null {
+	/**
+	 * The three Node modules this reaches for on desktop, fetched once at
+	 * startup and handed out synchronously from then on.
+	 *
+	 * They are imported rather than require()d so they arrive typed, and behind
+	 * the platform tests so a phone never asks for a module that is not there.
+	 * The callers are unchanged by that: they always had to cope with null, and
+	 * on mobile null is still all they ever get. Both tests stand on purpose:
+	 * isDesktopApp is the one that means Node is there, and isDesktop is the one
+	 * the directory's linter reads as the guard.
+	 */
+	private async loadNodeModules() {
+		if (!Platform.isDesktop) return;
+		if (!Platform.isDesktopApp) return;
 		try {
-			return require("node:fs") as typeof import("node:fs");
+			const [fs, cp, os] = await Promise.all([import("node:fs"), import("node:child_process"), import("node:os")]);
+			this.node = { fs, cp, os };
 		} catch {
-			return null;
+			/* no Node here after all; every caller already handles that */
 		}
+	}
+
+	private nodeFs(): typeof import("node:fs") | null {
+		return this.node?.fs ?? null;
 	}
 
 	/* ---- yt-dlp is a separate program, so an X capture is desktop-only and
 	 * every one of these returns null on mobile rather than throwing. ---- */
 
 	private nodeCp(): typeof import("node:child_process") | null {
-		try {
-			return require("node:child_process") as typeof import("node:child_process");
-		} catch {
-			return null;
-		}
+		return this.node?.cp ?? null;
 	}
 
 	private nodeOs(): typeof import("node:os") | null {
-		try {
-			return require("node:os") as typeof import("node:os");
-		} catch {
-			return null;
-		}
+		return this.node?.os ?? null;
 	}
 
 	private openPartial() {
@@ -3911,7 +3967,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			// inflates every attendee's history, and it only exists on the device
 			// that made the copy, so the two devices would derive different pages
 			if (isConflictCopy(f.path)) continue;
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			if (!isCaptureNote(fm)) continue;
 			// ctime is a per-device fact (creation here, download there), so it
 			// must be the last resort: a dated filename gives every device the
@@ -4027,7 +4083,10 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  Extractor plugin's OCR for images. */
 	async extractDocText(file: TFile): Promise<string> {
 		if (file.extension.toLowerCase() === "pdf") {
-			const pdfjs = await loadPdfJs();
+			// loadPdfJs() is typed `any`, so the corner of pdf.js this uses is
+			// named here instead: four calls, and everything they hand back is
+			// then checked like the rest of the file.
+			const pdfjs = (await loadPdfJs()) as PdfJsLike;
 			const data = await this.app.vault.readBinary(file);
 			const doc = await pdfjs.getDocument({ data }).promise;
 			let out = "";
@@ -4035,7 +4094,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			for (let i = 1; i <= pages; i++) {
 				const page = await doc.getPage(i);
 				const tc = await page.getTextContent();
-				out += (tc.items as { str?: string }[]).map((it) => it.str ?? "").join(" ") + "\n";
+				out += tc.items.map((it) => it.str ?? "").join(" ") + "\n";
 			}
 			return out;
 		}
@@ -4159,7 +4218,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			const folder = normalizePath(this.peopleFolderPath());
 			for (const f of this.app.vault.getMarkdownFiles()) {
 				if (f.parent?.path !== folder) continue;
-				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 				if (fm?.generated !== true) continue;
 				// a conflict copy of a person page is still marked generated, so
 				// without this it would be rebuilt as a person named after the
@@ -4485,7 +4544,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	async financesRollup(open = true) {
 		const docs: FinanceDoc[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			if (fm?.type !== "capture-doc") continue;
 			const amount = typeof fm.amount === "number" ? fm.amount : parseFloat(String(fm.amount ?? "")) || 0;
 			docs.push({
@@ -4907,7 +4966,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	private spendItems(): SpendItem[] {
 		const out: SpendItem[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			if (fm?.type !== "capture-txn-item") continue;
 			const eff = typeof fm.effective === "number" ? fm.effective : typeof fm.amount === "number" ? fm.amount : 0;
 			out.push({
@@ -4944,7 +5003,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		}
 		const pending: { file: TFile; name: string }[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			if (fm?.type !== "capture-txn-item" || String(fm.category ?? "other") !== "other") continue;
 			pending.push({ file: f, name: String(fm.item ?? f.basename) });
 		}
@@ -5051,7 +5110,12 @@ export default class PowerAssistantPlugin extends Plugin {
 			(file ? this.app.metadataCache.getFileCache(file)?.sections : undefined)?.find((s) => s.type !== "yaml")?.type === "heading";
 
 		const place = (host: HTMLElement, where: "title" | "bottom", anchor: Element | null, wanted: boolean) => {
-			let el = host.querySelector(`:scope > .ptc-edited.is-${where}`) as HTMLElement | null;
+			let el = host.querySelector<HTMLElement>(`:scope > .ptc-edited.is-${where}`);
+			// The title closes its own bottom gap only while a ruled stamp is
+			// actually sitting under it. The title is right here in both branches,
+			// so it can be told; a :has() rule asks the same question of every
+			// title, forever, for an answer that changes twice a session.
+			if (where === "title" && anchor) anchor.toggleClass("ptc-title-ruled", wanted && pos === "rule");
 			if (!wanted) {
 				el?.remove();
 				return;
@@ -5273,7 +5337,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		let count = 0;
 		for (const file of this.app.vault.getMarkdownFiles()) {
 			const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-			if (!isCaptureNote(fm as Record<string, unknown> | undefined)) continue;
+			if (!isCaptureNote(fm)) continue;
 			let hit = false;
 			await this.app.vault.process(file, (d) => {
 				const n = stripTranscriptCallout(d.replace(/> \[!quote\]([-+]?) Transcript/g, "> [!transcript]$1 Transcript"));
@@ -5532,7 +5596,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	refreshPlayer() {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 		const fm = view?.file ? this.app.metadataCache.getFileCache(view.file)?.frontmatter : undefined;
-		const file = view && isCaptureNote(fm as Record<string, unknown> | undefined) ? this.noteAudioFile(view) : null;
+		const file = view && isCaptureNote(fm) ? this.noteAudioFile(view) : null;
 		if (!view || !file) {
 			this.player?.destroy();
 			this.player = null;
@@ -5597,7 +5661,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			return;
 		}
 		const fm = view!.file ? this.app.metadataCache.getFileCache(view!.file)?.frontmatter : undefined;
-		const partsMs = Array.isArray(fm?.parts) ? (fm!.parts as unknown[]).map(Number) : [0];
+		const partsMs = Array.isArray(fm?.parts) ? (fm.parts as unknown[]).map(Number) : [0];
 		const { index, secondsInPart } = partForStamp(partsMs.length ? partsMs : [0], secs);
 		const audio = audios[Math.min(index, audios.length - 1)];
 		for (const other of audios) if (other !== audio) other.pause();
@@ -5736,7 +5800,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		// the same listen-first help the post-recording dialog gets: clips come
 		// from the note's own audio embeds, located by the transcript's stamps
 		const noteUtts = transcriptToUtterances(md);
-		const offsets = partOffsetsOf(this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined);
+		const offsets = partOffsetsOf(this.app.metadataCache.getFileCache(file)?.frontmatter);
 		const partFiles: TFile[] = [];
 		const embedRe = /!\[\[([^\]|]+\.(?:webm|m4a|mp3|wav|ogg|flac|mp4))(?:\|[^\]]*)?\]\]/gi;
 		let em: RegExpExecArray | null;
@@ -6754,7 +6818,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		}
 		const cases: TFile[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
 			if (fm?.["pa-eval"] === true) cases.push(f);
 		}
 		if (!cases.length) {
@@ -7058,7 +7122,7 @@ export default class PowerAssistantPlugin extends Plugin {
 					const bytes = entries[pic.entry];
 					if (!bytes) continue;
 					progress.setMessage(`Power Assistant: slide ${i + 1} of ${order.length}${readCount ? `, ${readCount} read` : ""}…`);
-					const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+					const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 					const dest = await this.app.fileManager.getAvailablePathForAttachment(
 						`${file.basename} ${i + 1} ${pic.entry.split("/").pop() ?? "image"}`,
 						notePath
@@ -7380,7 +7444,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			// own chatter comes before it
 			const meta = parseYtDlpMeta(printed.trim().split("\n").filter(Boolean).pop() ?? "");
 			const dir = os.tmpdir();
-			const mine = (fs.readdirSync(dir) as string[]).filter((f) => f.startsWith(`pa-yt-${stamp}`) && f.endsWith(".vtt"));
+			const mine = (fs.readdirSync(dir)).filter((f) => f.startsWith(`pa-yt-${stamp}`) && f.endsWith(".vtt"));
 			for (const f of mine) written.push(`${dir}/${f}`);
 			// an uploaded track and an automatic one can land side by side, and the
 			// filename does not say which is which. A human-written track reads
@@ -7455,7 +7519,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			tmpPath = normalizePath(`${this.recordingFolder()}/x-${stamp}.${ext}`);
 			await this.ensureFolder(this.recordingFolder());
 			this.directProcess.add(tmpPath); // the create event must not auto-process this temp
-			tmp = await this.app.vault.createBinary(tmpPath, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+			tmp = await this.app.vault.createBinary(tmpPath, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 			new Notice("Power Assistant: transcribing the audio…");
 			// a diarizing provider can put the words only in utterances, so the
 			// joined form is the honest test of "was there any speech"
@@ -7548,7 +7612,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  count. X's embed payload is the fallback, for a post with no video that
 	 *  yt-dlp refuses, and which has no views to report anyway. */
 	async refreshPostStats(file: TFile) {
-		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 		const url = refreshableSource(fm);
 		if (!url) return;
 		new Notice("Power Assistant: re-reading the post…");
@@ -7595,7 +7659,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			if (!view?.containerEl) continue;
 			const file = view.file;
 			const had = view.containerEl.querySelector<HTMLElement>(".pa-refresh-stats");
-			const fm = file ? (this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined) : undefined;
+			const fm = file ? (this.app.metadataCache.getFileCache(file)?.frontmatter) : undefined;
 			const wants = !!file && !!refreshableSource(fm);
 			if (wants && !had) {
 				// read the leaf's file when the button is pressed, not when it is
@@ -8249,7 +8313,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  working stub, a live rival's stub, a stale stub whose device died, or a
 	 *  failed run waiting for a person. Decides who may (re)take the path. */
 	private stubState(file: TFile): "note" | "mine" | "claimed-other" | "stale" | "failed" {
-		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 		const state = pendingState(fm, Date.now());
 		if (state === "failed") return "failed";
 		if (state === "claimed") return fm?.["pa-claimed"] === this.deviceName() ? "mine" : "claimed-other";
@@ -8368,7 +8432,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (!disk) return null;
 		const d = { ...disk } as Record<string, unknown>;
 		for (const k of DEVICE_KEYS) delete d[k];
-		return d as Partial<PowerAssistantSettings>;
+		return d;
 	}
 
 	/**
@@ -8386,7 +8450,7 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	async loadSettings() {
 		const file = (await this.loadData()) as Partial<PowerAssistantSettings> | null;
-		this.adoptSettings(Object.assign({}, DEFAULT_SETTINGS, file) as PowerAssistantSettings);
+		this.adoptSettings(Object.assign({}, DEFAULT_SETTINGS, file));
 		this.settings.extractions = Object.assign({}, DEFAULT_SETTINGS.extractions, this.settings.extractions);
 		// per-recording diarization letters must never be standing corrections:
 		// "Speaker A → Darwin" renames a DIFFERENT person in every future
@@ -8408,7 +8472,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		// a template still matching a default this plugin used to ship was never
 		// edited, so it follows the new one; an edited template is untouchable
 		if (LEGACY_MEETING_TEMPLATES.includes(this.settings.meetingTemplate)) this.settings.meetingTemplate = DEFAULT_MEETING_TEMPLATE;
-		const f = file as Record<string, unknown> | null;
+		const f = file;
 		const fileHasSecrets = !!f && SECRET_KEYS.some((k) => f[k] != null && f[k] !== "" && f[k] !== 0);
 		// upgrade path: credentials found in data.json move into localStorage
 		// once, then the file is rewritten without them
@@ -10197,7 +10261,19 @@ function transcriptLivePreview(plugin: PowerAssistantPlugin) {
 					continue;
 				}
 				// style every line of the section until the next heading (or EOF)
-				for (i++; i <= doc.lines && !/^#{1,6}\s/.test(doc.line(i).text); i++) styleLine(doc.line(i), cur, decos);
+				for (i++; i <= doc.lines && !/^#{1,6}\s/.test(doc.line(i).text); i++) {
+					const line = doc.line(i);
+					// The blank Markdown line between two turns renders as a whole
+					// empty editor line, which on top of each turn's padding roughly
+					// doubles the space between speakers. The builder is already
+					// walking the section in order, so it can see that the next line
+					// starts a turn and mark this one; the stylesheet asked the same
+					// question with :has(+ …), which re-tests on every edit.
+					if (!line.text.trim() && i < doc.lines && parseTranscriptSpeakerLine(doc.line(i + 1).text)) {
+						decos.push(Decoration.line({ class: "pa-lp-tr-gap" }).range(line.from));
+					}
+					styleLine(line, cur, decos);
+				}
 			}
 		} catch (e) {
 			console.error("Power Assistant: transcript Live Preview failed", e);
@@ -10239,12 +10315,12 @@ function transcriptLivePreview(plugin: PowerAssistantPlugin) {
 		},
 		click: (e: MouseEvent) => {
 			const t = e.target as HTMLElement;
-			const nameEl = t?.closest?.(".pa-lp-tr-name") as HTMLElement | null;
+			const nameEl = t?.closest?.<HTMLElement>(".pa-lp-tr-name");
 			if (nameEl?.dataset.speaker) {
 				plugin.openSpeakerMenuFromEditor(nameEl.dataset.speaker, e);
 				return true;
 			}
-			const stampEl = t?.closest?.(".pa-lp-tr-stamp") as HTMLElement | null;
+			const stampEl = t?.closest?.<HTMLElement>(".pa-lp-tr-stamp");
 			if (stampEl?.dataset.secs) {
 				plugin.seekFromEditor(Number(stampEl.dataset.secs));
 				return true;
@@ -10291,7 +10367,7 @@ class TranscriptPlayer {
 		this.bar = this.build();
 		// mount on the (non-scrolling) content frame so the bar stays pinned to
 		// the bottom of the view while the transcript scrolls inside it
-		this.frame = (this.view.containerEl.querySelector(".view-content") as HTMLElement | null) ?? this.view.containerEl;
+		this.frame = (this.view.containerEl.querySelector(".view-content")) ?? this.view.containerEl;
 		this.frame.appendChild(this.bar);
 		this.frame.addClass("pa-has-player");
 		// match the player's height to the app's bottom chrome so their top edges
@@ -10299,7 +10375,7 @@ class TranscriptPlayer {
 		// or the status bar if that footer is hidden. The vault footer isn't hidden
 		// by the player, so this reads true even on remounts; cache the last good value.
 		const doc = this.frame.ownerDocument;
-		const bottomBar = (doc.body.querySelector(".workspace-sidedock-vault-profile") ?? doc.body.querySelector(".status-bar")) as HTMLElement | null;
+		const bottomBar = doc.body.querySelector<HTMLElement>(".workspace-sidedock-vault-profile") ?? doc.body.querySelector<HTMLElement>(".status-bar");
 		const barH = bottomBar?.offsetHeight ?? 0;
 		if (barH > 0) lastBottomBarHeight = barH;
 		if (lastBottomBarHeight > 0) this.frame.style.setProperty("--pa-player-h", `${lastBottomBarHeight}px`);
@@ -10315,7 +10391,7 @@ class TranscriptPlayer {
 	seek(secs: number) {
 		if (!Number.isFinite(secs)) return;
 		const fm = this.file ? this.plugin.app.metadataCache.getFileCache(this.view.file ?? this.file)?.frontmatter : undefined;
-		const partsMs = Array.isArray(fm?.parts) ? (fm!.parts as unknown[]).map(Number) : [0];
+		const partsMs = Array.isArray(fm?.parts) ? (fm.parts as unknown[]).map(Number) : [0];
 		const { secondsInPart } = partForStamp(partsMs.length ? partsMs : [0], secs);
 		this.audio.currentTime = secondsInPart;
 		void this.audio.play();
@@ -10611,6 +10687,9 @@ function enhanceTranscriptCallout(
 			btn.addEventListener("click", (e) => {
 				e.preventDefault();
 				e.stopPropagation(); // do not fold the callout
+				// re-read the turns first: a highlight added since the last render
+				// should survive the filter it was made for
+				markUnhighlightedTurns(callout);
 				btn.toggleClass("is-on", callout.classList.toggle("pa-only-highlights"));
 			});
 		}
@@ -10618,6 +10697,7 @@ function enhanceTranscriptCallout(
 		for (const p of Array.from(callout.querySelectorAll<HTMLElement>(".callout-content > p"))) {
 			if (!p.classList.contains("pa-tr-comment") && (p.textContent ?? "").trimStart().startsWith("💬")) p.classList.add("pa-tr-comment");
 		}
+		markUnhighlightedTurns(callout);
 		for (const strong of Array.from(callout.querySelectorAll<HTMLElement>("strong"))) decorateTurnLabel(strong, colorFor, emojiFor, onSpeaker, onPlay);
 	}
 	// plain transcripts (no callout wrapper, every capture since the callout
@@ -11584,7 +11664,7 @@ class LiveSession {
 /** Pick a mail folder, then import it or scan its senders. Two actions on one
  *  list, because deciding what to block is a step you take before importing. */
 class MailFolderModal extends Modal {
-	private rows: { accountId: string; accountName: string; id: string; name: string; path: string }[] = [];
+	private rows: MailFolderRow[] = [];
 
 	constructor(
 		app: App,
@@ -11598,7 +11678,7 @@ class MailFolderModal extends Modal {
 		const c = this.contentEl;
 		c.createEl("p", { cls: "pcap-field-help", text: "Loading folders…" });
 		try {
-			const imp = (this.plugin as unknown as { mailImporter(): { folders: () => Promise<typeof this.rows> } | null }).mailImporter();
+			const imp = (this.plugin as unknown as { mailImporter(): { folders: () => Promise<MailFolderRow[]> } | null }).mailImporter();
 			this.rows = imp ? await imp.folders() : [];
 		} catch (e) {
 			this.rows = [];
@@ -12952,6 +13032,12 @@ class AssistantSettingTab extends PluginSettingTab {
 					if (r.aliases?.length) st.settingEl.dataset.ptcAlias = r.aliases.join(" ").toLowerCase();
 					r.build?.(st);
 					if (r.help) this.addHelp(st, r.help);
+					// A row with something to type in, drag, or choose from takes the
+					// full width of the two-column layout; a row with a switch or a
+					// button sits in one column. The control is built by now, so the row
+					// can be asked once here instead of the stylesheet asking it forever
+					// with a :has selector.
+					if (st.settingEl.querySelector(WIDE_CONTROLS)) st.settingEl.addClass("ptc-wide");
 				}
 			}
 		}
@@ -12962,7 +13048,7 @@ class AssistantSettingTab extends PluginSettingTab {
 			const q = this.query.trim().toLowerCase();
 			setVisible(tabBar, !q);
 			for (const sec of Array.from(body.children) as HTMLElement[]) {
-				const items = Array.from(sec.querySelectorAll(":scope > .setting-item:not(.setting-item-heading)")) as HTMLElement[];
+				const items = Array.from(sec.querySelectorAll<HTMLElement>(":scope > .setting-item:not(.setting-item-heading)"));
 				if (!q) {
 					for (const it of items) setVisible(it, true);
 					const mine = sec.dataset.tab === this.activeTab;

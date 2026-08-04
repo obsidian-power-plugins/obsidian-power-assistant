@@ -37,7 +37,7 @@ const STYLES: Record<string, string> = {
 /** Put the style attributes on, without touching a tag that already carries one
  *  or a <code> nested inside a <pre> (which is already styled by its parent). */
 function inlineStyles(html: string): string {
-	return html.replace(/<(h1|h2|h3|h4|p|ul|ol|li|blockquote|pre|code|table|th|td|hr|a)(\s[^>]*)?>/g, (m, tag: string, attrs = "") => {
+	return html.replace(/<(h1|h2|h3|h4|p|ul|ol|li|blockquote|pre|code|table|th|td|hr|a)(\s[^>]*)?>/g, (m: string, tag: string, attrs: string | undefined = "") => {
 		if (/\sstyle=/i.test(attrs)) return m;
 		return `<${tag}${attrs} style="${STYLES[tag]}">`;
 	});
@@ -54,8 +54,8 @@ export function escapeHtml(s: string): string {
  *  `intro` is the sender's own words, so it is treated as Markdown like the rest
  *  and set apart from the page under the heading. */
 export function shareEmailHtml(o: { title: string; markdown: string; intro?: string; source?: string }): string {
-	const body = inlineStyles(marked.parse(o.markdown, { async: false, gfm: true, breaks: false }) as string);
-	const intro = o.intro?.trim() ? inlineStyles(marked.parse(o.intro, { async: false, gfm: true, breaks: true }) as string) : "";
+	const body = inlineStyles(marked.parse(o.markdown, { async: false, gfm: true, breaks: false }));
+	const intro = o.intro?.trim() ? inlineStyles(marked.parse(o.intro, { async: false, gfm: true, breaks: true })) : "";
 	const source = o.source?.trim()
 		? `<p style="${STYLES.p};font-size:12px;color:#777">Source: <a href="${escapeHtml(o.source)}" style="${STYLES.a}">${escapeHtml(o.source)}</a></p>`
 		: "";

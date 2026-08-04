@@ -172,7 +172,7 @@ export async function fetchCalendar(accessToken: string, startISO: string, endIS
 	});
 	if (r.status >= 400) {
 		const j = bodyJson(r);
-		throw new Error(((j?.error as { message?: string })?.message as string) || `Could not read your calendar (${r.status}).`);
+		throw new Error(((j?.error as { message?: string })?.message) || `Could not read your calendar (${r.status}).`);
 	}
 	return (bodyJson(r)?.value as unknown[]) ?? [];
 }

@@ -224,8 +224,11 @@
 	color: var(--text-on-accent);
 }
 
-/* show-only-highlights hides turns that have no highlight (but keeps comments) */
-.pa-transcript.pa-only-highlights .callout-content > p:not(:has(mark)):not(.pa-tr-comment) {
+/* show-only-highlights hides turns that have no highlight (but keeps comments).
+   pa-tr-nohl is set as the turns render and again when the filter is switched
+   on; asking the stylesheet to look inside every paragraph instead leaves a
+   standing query over the whole transcript. */
+.pa-transcript.pa-only-highlights .callout-content > p.pa-tr-nohl:not(.pa-tr-comment) {
 	display: none;
 }
 
@@ -282,7 +285,7 @@
    empty cm-line immediately before a speaker line (never a turn or its body,
    which carry their own classes) drops the gap to just the padding, about half.
    The turn's own padding is left alone, so the playing-turn highlight stays roomy. */
-.markdown-source-view.mod-cm6 .cm-line:has(+ .cm-line.pa-lp-tr) {
+.markdown-source-view.mod-cm6 .cm-line.pa-lp-tr-gap {
 	min-height: 0;
 	line-height: 0;
 	font-size: 0;
@@ -342,7 +345,16 @@
 
 /* mine is the player now: hide the note's native audio embed, and clear the
    status-bar labels off the sticky bar while a player is showing */
-.pa-has-player .internal-embed.media-embed:has(audio) {
+/* The embed names its own file, so its extension answers what a :has audio
+   test was being asked, without a query that re-runs over the note. The list is
+   the one AUDIO_EXTS holds in main.ts. */
+.pa-has-player .internal-embed.media-embed[src$=".webm" i],
+.pa-has-player .internal-embed.media-embed[src$=".m4a" i],
+.pa-has-player .internal-embed.media-embed[src$=".mp3" i],
+.pa-has-player .internal-embed.media-embed[src$=".wav" i],
+.pa-has-player .internal-embed.media-embed[src$=".ogg" i],
+.pa-has-player .internal-embed.media-embed[src$=".flac" i],
+.pa-has-player .internal-embed.media-embed[src$=".mp4" i] {
 	display: none;
 }
 
@@ -1502,20 +1514,17 @@ button.pcap-recbar-btn {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 	grid-auto-flow: row dense;
-	column-gap: 26px;
+	gap: 0 26px;
 	align-items: start;
 }
+/* .ptc-wide is set as each row is drawn, on the ones whose control is a field
+   to fill in rather than a switch to flip. The selector used to ask the same
+   question with :has, once per kind of control, which makes every one of them a
+   standing query against the whole settings subtree. */
 .ptc-settings-section > .setting-item-heading,
 .ptc-settings-section > .ptc-section-intro,
 .ptc-settings-section > .ptc-list-row,
-.ptc-settings-section > .setting-item:has(input[type="text"]),
-.ptc-settings-section > .setting-item:has(input[type="password"]),
-.ptc-settings-section > .setting-item:has(input[type="search"]),
-.ptc-settings-section > .setting-item:has(input[type="number"]),
-.ptc-settings-section > .setting-item:has(textarea),
-.ptc-settings-section > .setting-item:has(.slider),
-.ptc-settings-section > .setting-item:has(select),
-.ptc-settings-section > .setting-item:has(input[type="range"]) {
+.ptc-settings-section > .setting-item.ptc-wide {
 	grid-column: 1 / -1;
 }
 
@@ -1552,7 +1561,7 @@ button.pcap-recbar-btn {
    rather than a border on the title: it then travels with the stamp, and a
    title that wraps to two lines cannot leave the line stranded. The title's
    own bottom gap is closed only when this stamp actually follows it. */
-.inline-title:has(+ .ptc-edited.is-rule) {
+.inline-title.ptc-title-ruled {
 	margin-bottom: 0;
 }
 
