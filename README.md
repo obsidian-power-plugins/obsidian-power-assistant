@@ -2,9 +2,9 @@
 
 Capture meetings, voice memos, and any audio into structured Obsidian notes. Record in the app (desktop and mobile) or drop audio files into a watch folder; Power Assistant transcribes them and uses AI to produce a note with the sections you choose: Summary, Action items (dashboard-ready task lines, or a table), Decisions, Risks & blockers, and Questions. Every note also carries named attendees, clickable timestamps, carried-over items from the previous meeting in the series, the raw transcript, and an embed of the original audio.
 
-[![Buy me a coffee](https://cdn.buymeacoffee.com/buttons/default-yellow.png)](https://buymeacoffee.com/powerplugins)
-
 ![A captured meeting note: properties carrying attendees, duration, speaker count and model, then an AI written summary, action items with an owner and a due date each, and open questions](docs/images/capture-note.png)
+
+[![Buy me a coffee](docs/images/buy-me-a-coffee.png)](https://buymeacoffee.com/powerplugins)
 
 One recording in, one note out. The properties carry the attendees, the run time, how many speakers were heard, and which model wrote it. Action items come out as real task lines with an owner and a date, so they roll up in any dashboard that reads tasks.
 
