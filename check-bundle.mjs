@@ -44,6 +44,26 @@ if (converted > 0) {
 	process.exit(1);
 }
 
+// The directory rejects a bundle that creates <script> elements at runtime,
+// and it counts them in main.js rather than in src/. Our own code has never
+// had one; the four that failed the first submission came from the setImmediate
+// polyfills buried in docx's pre-browserified dist. esbuild.config.mjs rewrites
+// them at load time, and this proves the rewrite still reaches every one of
+// them: a docx upgrade that reshapes that code shows up here as a build
+// failure, not as a rejected submission.
+const injections = (bundle.match(/\.createElement\(\s*["'`]script["'`]\s*\)/g) ?? []).length;
+
+if (injections > 0) {
+	console.error(
+		`\n  main.js creates ${injections} <script> element${injections === 1 ? "" : "s"} dynamically.\n` +
+			"  The community directory rejects the submission over this.\n" +
+			"  The stripScriptInjection plugin in esbuild.config.mjs no longer matches;\n" +
+			"  check whether a dependency changed shape.\n",
+	);
+	process.exit(1);
+}
+console.log("  bundle check: no dynamic script creation");
+
 // Lookbehind inside a string reaches RegExp at runtime, so it throws only when
 // that code path runs. Worth seeing, not worth blocking on: some of these are
 // feature-detected by the library that owns them.
