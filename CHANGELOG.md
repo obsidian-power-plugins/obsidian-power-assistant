@@ -13,6 +13,27 @@ All notable changes to Power Assistant (formerly Power Capture). Dates are when 
 
 - The README lists what the community catalog's scan reports about this plugin, what each one is actually for, and where in the source to check it: starting yt-dlp, listing vault files, reading and writing the clipboard, and the temporary files written outside the vault.
 
+## 1.89.12
+
+### Fixed
+
+- **A capture no longer opens a second copy of a note you already had open.** Finishing a capture into an open note handed you a duplicate of it: two scroll positions, two undo histories, and edits landing in whichever one you looked at last. That is worse here than it would be elsewhere, because a meeting note is usually open precisely because you were typing in it while the recording ran, and the copy that came back was the one that covered it over. Every route that opens a note which already existed now steps to the tab already holding it: the transcript handed over for tagging, a merge into an existing note, a regenerated note, and a recording stub another device may already have finished. Citations in the assistant panel do the same, since a citation usually points at the note you are already reading. Ctrl or Cmd still asks for a new tab and still gets one. Only tabs in the main area count, so a note in a sidebar or popped out into its own window is never yanked into focus behind your back.
+- **The merge into an existing note stopped opening a duplicate on its way past.** Since Obsidian 1.7.2 every tab you are not standing in is deferred, holding a stand-in that reports no file, so the search for an already-open copy missed it and opened another.
+- **The live transcript hears the whole mix again, not just its left half.** When a recording captures system audio, the mic and the desktop meet as a stereo mix, and the tap rebuilt in 1.89.11 was reading the left channel alone. Anything sitting on the right by itself stopped reaching AssemblyAI. The transcript still streamed throughout, which is why nothing looked wrong. The tap is explicitly mono again, the way the node it replaced behaved. Mic-only sessions were unaffected, as were the saved recording and batch transcription, which never went through this tap.
+
+## 1.89.11
+
+### Changed
+
+- **The live transcript is fed from an AudioWorklet.** It ran on a `ScriptProcessorNode`, deprecated for years, which does its work on the main thread: a render, a vault write, or a long extraction could stall it and drop samples out of the stream. The worklet runs on the audio thread, where this work always belonged, so a busy Obsidian no longer costs you words. A tap that cannot start now says so and leaves the recording alone, rather than quietly taking it down with it.
+
+## 1.89.10
+
+### Changed
+
+- **Settings turn up in Obsidian's own settings search.** Obsidian 1.13 builds a settings tab from the definitions a plugin declares and no longer calls the older `display()`, and a tab that only implements the old way keeps working but has none of its settings indexed, which is the part you notice when you go looking for one. Both renderers now draw from a single declaration of each row, so they cannot drift apart. On 1.13 and up you get a native page per tab and a headed group per section; older builds fall through to the previous tab exactly as before, folding and two-column layout included. The minimum Obsidian version is unchanged at 1.8.7.
+- Ten rows on the Meetings tab were sitting under the **Voice identity** heading only because no new section began after it. Action items and recording length are back under Meetings, where they belong.
+
 ## 1.89.9
 
 ### Changed
