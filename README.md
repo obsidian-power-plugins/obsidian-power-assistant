@@ -176,7 +176,9 @@ The community catalog scans a plugin for what it is *capable* of, which is not t
 
 Both Node capabilities above are desktop only. `node:fs`, `node:child_process`, and `node:os` are imported lazily behind a desktop check, and every accessor returns nothing on mobile, so on a phone the paths that would reach them are unreachable rather than merely unused.
 
-There is no `eval`, no `Function` constructor, no `innerHTML`, and no code fetched and run at runtime. That holds for the built `main.js` and not just for the source, because the release build refuses to publish a bundle containing either one. That check is how the last `Function` constructor was caught: not ours, but a string-to-function coercion inside a scheduling polyfill buried in a bundled library, unreachable under Obsidian and now rewritten out at build time.
+There is no `eval`, no `Function` constructor, and no code fetched and run at runtime. That holds for the built `main.js` and not just for the source, because the release build refuses to publish a bundle containing either one. That check is how the last `Function` constructor was caught: not ours, but a string-to-function coercion inside a scheduling polyfill buried in a bundled library, unreachable under Obsidian and now rewritten out at build time.
+
+This plugin's own code sets no `innerHTML`. Two assignments do survive in the built `main.js`, both inside the bundled Mozilla Readability: one restores a cached copy of a page when the first parse comes back too short to trust, the other lifts an image out of a `<noscript>` wrapper. Both act on the detached document Readability is reducing, never on Obsidian's own UI, and neither is reachable outside a page capture you started.
 
 Every network call this plugin's own code makes goes through Obsidian's `requestUrl`. Two `fetch` calls do appear in the built `main.js`: they belong to the bundled `@anthropic-ai/sdk`, which does its own HTTP, and they run only when you have configured an AI key and used a feature that needs it. Any Anthropic-compatible endpoint you point it at (Ollama, LM Studio, llama.cpp) is where they go instead.
 
