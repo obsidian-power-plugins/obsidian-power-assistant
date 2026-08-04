@@ -27,20 +27,32 @@ const prod = process.argv[2] === "production";
 const TEST = /["']onreadystatechange["']\s+in\s+[\w$.]+\.createElement\(\s*["']script["']\s*\)/g;
 const CREATE = /\.createElement\(\s*["']script["']\s*\)/g;
 
-const stripScriptInjection = {
-	name: "strip-script-injection",
+// The same setimmediate shim also honours the old setTimeout("code string")
+// form by compiling its argument. That is the only new Function() anywhere in
+// the bundle, and the only reason the directory reports dynamic code
+// execution against us. Every caller inside the bundle passes a function, so
+// the coercion is unreachable; swapping the compiler for a thrower keeps the
+// expression's shape while making the string path fail loudly instead of
+// running whatever it was handed.
+const COMPILE = /new Function\(\s*""\s*\+\s*[\w$]+\s*\)/g;
+const THROWER = '(() => { throw new TypeError("setImmediate: string arguments are not supported"); })';
+
+const stripUnsafeVendorPatterns = {
+	name: "strip-unsafe-vendor-patterns",
 	setup(build) {
 		const patched = new Set();
 		build.onLoad({ filter: /node_modules[\\/].*\.(mjs|cjs|js)$/ }, async (args) => {
 			const src = await readFile(args.path, "utf8");
-			if (!CREATE.test(src)) return null;
-			CREATE.lastIndex = 0;
-			const contents = src.replace(TEST, "false").replace(CREATE, '.createElement("span")');
+			// rewrite first and compare, rather than testing with these global
+			// regexes: /g regexes carry lastIndex between .test() calls, which
+			// makes a guard silently skip every other file it should patch
+			const contents = src.replace(TEST, "false").replace(CREATE, '.createElement("span")').replace(COMPILE, THROWER);
+			if (contents === src) return null;
 			patched.add(args.path.replace(/^.*node_modules[\\/]/, ""));
 			return { contents, loader: "js" };
 		});
 		build.onEnd(() => {
-			for (const p of patched) console.log(`  stripped script injection from ${p}`);
+			for (const p of patched) console.log(`  stripped unsafe vendor patterns from ${p}`);
 		});
 	},
 };
@@ -65,7 +77,7 @@ const ctx = await esbuild.context({
 	// that is what the directory's linter reads, and they still never run on a
 	// phone.
 	supported: { "regexp-lookbehind-assertions": false, "dynamic-import": false },
-	plugins: [stripScriptInjection],
+	plugins: [stripUnsafeVendorPatterns],
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,

@@ -57,12 +57,29 @@ if (injections > 0) {
 	console.error(
 		`\n  main.js creates ${injections} <script> element${injections === 1 ? "" : "s"} dynamically.\n` +
 			"  The community directory rejects the submission over this.\n" +
-			"  The stripScriptInjection plugin in esbuild.config.mjs no longer matches;\n" +
+			"  The stripUnsafeVendorPatterns plugin in esbuild.config.mjs no longer matches;\n" +
 			"  check whether a dependency changed shape.\n",
 	);
 	process.exit(1);
 }
 console.log("  bundle check: no dynamic script creation");
+
+// Same idea for compiling a string into a function. The directory reports it as
+// dynamic code execution, which it lists under "prevents full static analysis":
+// worth keeping at zero so the scan has nothing to say about us, even though
+// the only source of it was a polyfill nothing calls with a string.
+const compiles = (bundle.match(/new Function\s*\(/g) ?? []).length + (bundle.match(/(?<![\w.$])eval\s*\(/g) ?? []).length;
+
+if (compiles > 0) {
+	console.error(
+		`\n  main.js has ${compiles} dynamic code execution site${compiles === 1 ? "" : "s"} (eval / new Function).\n` +
+			"  The directory reports these, and they block full static analysis of the plugin.\n" +
+			"  Check which dependency introduced one, and whether it can be rewritten the way\n" +
+			"  the setimmediate shim is in esbuild.config.mjs.\n",
+	);
+	process.exit(1);
+}
+console.log("  bundle check: no dynamic code execution");
 
 // Lookbehind inside a string reaches RegExp at runtime, so it throws only when
 // that code path runs. Worth seeing, not worth blocking on: some of these are
