@@ -3246,7 +3246,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			await right.setViewState({ type: LIVE_VIEW, active: true });
 			leaf = right;
 		}
-		this.app.workspace.revealLeaf(leaf);
+		await this.app.workspace.revealLeaf(leaf);
 		return leaf.view instanceof LiveView ? leaf.view : null;
 	}
 
@@ -3872,7 +3872,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			const cur = view.editor.getCursor();
 			view.editor.setValue(mergeMeetingCapture(stripProgress(view.editor.getValue()), note));
 			view.editor.setCursor(cur);
-			this.app.workspace.revealLeaf(view.leaf);
+			await this.app.workspace.revealLeaf(view.leaf);
 			return;
 		}
 		const existing = stripProgress(await this.app.vault.read(target));
@@ -3929,7 +3929,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				.find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === target.path);
 			if (view) {
 				view.editor.setValue(`${stripProgress(view.editor.getValue()).trimEnd()}\n\n${callout}\n`);
-				this.app.workspace.revealLeaf(view.leaf);
+				await this.app.workspace.revealLeaf(view.leaf);
 			} else {
 				await this.app.vault.process(target, (data) => `${stripProgress(data).trimEnd()}\n\n${callout}\n`);
 			}
@@ -7187,7 +7187,10 @@ export default class PowerAssistantPlugin extends Plugin {
 					// any other failure came from yt-dlp itself and is worth showing.
 					const notHere = (err as NodeJS.ErrnoException).code === "ENOENT" || /No module named/i.test(stderr || "");
 					if (notHere) {
-						if (i + 1 < tries.length) return attempt(i + 1).then(resolve, reject);
+						if (i + 1 < tries.length) {
+							void attempt(i + 1).then(resolve, reject);
+							return;
+						}
 						return reject(new YtDlpMissing());
 					}
 					const last = (stderr || "").trim().split("\n").filter(Boolean).pop();
@@ -7301,7 +7304,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			// diagnostics only: the names are worth having when a session does not
 			// work, and no longer decide whether it is used
 			if (!hasYoutubeLogin(mine))
-				console.info(
+				console.warn(
 					`Power Assistant: ${mine.length} YouTube cookies in that session (of ${all.length}), none named like a sign-in. Names: ${[...new Set(mine.map((c) => c.name))].join(", ") || "none"}`
 				);
 			return mine;
@@ -7826,11 +7829,10 @@ export default class PowerAssistantPlugin extends Plugin {
 		// string parsed out of thin air does not have, so links would otherwise
 		// come out pointing nowhere
 		if (!doc.querySelector("base")) {
-			// createEl is not reachable here: this document came from DOMParser,
-			// so it has no window, and the element has to belong to it anyway
-			const base = doc.createElement("base");
-			base.setAttribute("href", url);
-			doc.head?.appendChild(base);
+			// Obsidian hangs createEl off Node, so the head of a DOMParser document
+			// has it too, and creating through the head both adopts the element into
+			// this document and appends it in one step
+			doc.head?.createEl("base", { attr: { href: url } });
 		}
 		const meta = parseWebMeta(html);
 		const article = new Readability(doc).parse();
@@ -8562,30 +8564,34 @@ class NewMeetingModal extends Modal {
 		pasteEl.placeholder = "Paste invite text or .ics here…";
 		const pasteBtns = c.createDiv({ cls: "pcap-btn-row" });
 		pasteBtns.createEl("button", { text: "Fill fields from paste" }).addEventListener("click", () => this.applyParsed(parseMeetingInvite(pasteEl.value)));
-		pasteBtns.createEl("button", { text: "From clipboard" }).addEventListener("click", async () => {
-			try {
-				const txt = await navigator.clipboard.readText();
-				if (!txt.trim()) return void new Notice("Power Assistant: the clipboard is empty.");
-				pasteEl.value = txt;
-				this.applyParsed(parseMeetingInvite(txt));
-			} catch {
-				new Notice("Power Assistant: could not read the clipboard; paste into the box instead.");
-			}
+		pasteBtns.createEl("button", { text: "From clipboard" }).addEventListener("click", () => {
+			void (async () => {
+				try {
+					const txt = await navigator.clipboard.readText();
+					if (!txt.trim()) return void new Notice("Power Assistant: the clipboard is empty.");
+					pasteEl.value = txt;
+					this.applyParsed(parseMeetingInvite(txt));
+				} catch {
+					new Notice("Power Assistant: could not read the clipboard; paste into the box instead.");
+				}
+			})();
 		});
 		// load a saved .ics directly, so an Outlook "Save As > iCalendar" export
 		// fills every field (attendees included) without any copy/paste
 		const fileInput = pasteBtns.createEl("input", { type: "file", cls: "ptc-hidden-file", attr: { accept: ".ics,text/calendar" } });
-		fileInput.addEventListener("change", async () => {
-			const f = fileInput.files?.[0];
-			if (!f) return;
-			try {
-				const txt = await f.text();
-				pasteEl.value = txt;
-				this.applyParsed(parseMeetingInvite(txt));
-			} catch {
-				new Notice("Power Assistant: could not read that file.");
-			}
-			fileInput.value = "";
+		fileInput.addEventListener("change", () => {
+			void (async () => {
+				const f = fileInput.files?.[0];
+				if (!f) return;
+				try {
+					const txt = await f.text();
+					pasteEl.value = txt;
+					this.applyParsed(parseMeetingInvite(txt));
+				} catch {
+					new Notice("Power Assistant: could not read that file.");
+				}
+				fileInput.value = "";
+			})();
 		});
 		pasteBtns.createEl("button", { text: "Load .ics file…" }).addEventListener("click", () => fileInput.click());
 		// pick one meeting straight off the connected Microsoft 365 calendar and
@@ -8636,13 +8642,34 @@ class NewMeetingModal extends Modal {
 	/** Fill the visible fields and stash the invite context from a parsed paste. */
 	private applyParsed(p: ParsedInvite, quiet = false) {
 		const got: string[] = [];
-		if (p.title) ((this.mtitle = p.title), this.titleInput && (this.titleInput.value = p.title), got.push("title"));
-		if (p.attendees.length) ((this.attendees = p.attendees.join(", ")), this.attInput && (this.attInput.value = this.attendees), got.push("attendees"));
-		if (p.agenda) ((this.agenda = p.agenda), this.agendaInput && (this.agendaInput.value = p.agenda), got.push("agenda"));
-		if (p.date) ((this.date = p.date), got.push("date"));
-		if (p.location) ((this.location = p.location), got.push("location"));
+		if (p.title) {
+			this.mtitle = p.title;
+			if (this.titleInput) this.titleInput.value = p.title;
+			got.push("title");
+		}
+		if (p.attendees.length) {
+			this.attendees = p.attendees.join(", ");
+			if (this.attInput) this.attInput.value = this.attendees;
+			got.push("attendees");
+		}
+		if (p.agenda) {
+			this.agenda = p.agenda;
+			if (this.agendaInput) this.agendaInput.value = p.agenda;
+			got.push("agenda");
+		}
+		if (p.date) {
+			this.date = p.date;
+			got.push("date");
+		}
+		if (p.location) {
+			this.location = p.location;
+			got.push("location");
+		}
 		if (p.when) this.when = p.when;
-		if (p.teamsUrl) ((this.teamsUrl = p.teamsUrl), got.push("Teams link"));
+		if (p.teamsUrl) {
+			this.teamsUrl = p.teamsUrl;
+			got.push("Teams link");
+		}
 		if (p.meetingId) this.meetingId = p.meetingId;
 		if (p.passcode) this.passcode = p.passcode;
 		if (!quiet) new Notice(got.length ? `Power Assistant: filled ${got.join(", ")} from the invite.` : "Power Assistant: nothing recognizable in that paste.");
@@ -12430,7 +12457,7 @@ class CorrectionModal extends Modal {
 	private from: string;
 	private to = "";
 	private remember = true;
-	constructor(app: App, prefill: string, private onApply: (from: string, to: string, remember: boolean) => void) {
+	constructor(app: App, prefill: string, private onApply: (from: string, to: string, remember: boolean) => void | Promise<void>) {
 		super(app);
 		this.from = prefill;
 	}
@@ -12466,7 +12493,8 @@ class CorrectionModal extends Modal {
 	}
 	private submit() {
 		this.close();
-		this.onApply(this.from, this.to, this.remember);
+		// the modal is already closed; the correction runs on its own from here
+		void this.onApply(this.from, this.to, this.remember);
 	}
 	onClose() {
 		this.contentEl.empty();
