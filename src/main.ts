@@ -8607,7 +8607,7 @@ class NewMeetingModal extends Modal {
 
 		c.createEl("label", { cls: "pcap-field-label", text: "Attendees" });
 		c.createEl("p", { cls: "pcap-field-sub", text: "Comma-separated; each becomes a linked person." });
-		this.attInput = c.createEl("input", { cls: "pcap-field-input", attr: { type: "text", placeholder: "Steve, Rachel" } });
+		this.attInput = c.createEl("input", { cls: "pcap-field-input", attr: { type: "text", placeholder: "Dana, Alex" } });
 		this.attInput.addEventListener("input", () => (this.attendees = this.attInput?.value ?? ""));
 
 		c.createEl("label", { cls: "pcap-field-label", text: "Meeting type" });
@@ -9168,7 +9168,7 @@ interface SpeakerNameOptions {
 	stats?: Record<string, { share: number; first: string }>;
 	/** Attendees from earlier captures, offered as type-ahead suggestions. */
 	suggestions?: string[];
-	/** Labels are full display labels ("Rachel"), not letters to prefix. */
+	/** Labels are full display labels ("Alex"), not letters to prefix. */
 	rawLabels?: boolean;
 	/** Listenable clips per label, and the player to run them, hearing the
 	 *  voice beats guessing it from the first words. Each click on a row's play
@@ -10879,7 +10879,7 @@ class AssistantChatView extends ItemView {
 		a.setText("…");
 		a.scrollIntoView({ block: "nearest" });
 		try {
-			// a short follow-up ("what about Rachel?") borrows the previous
+			// a short follow-up ("what about Alex?") borrows the previous
 			// question's words so retrieval keeps the thread's subject
 			const prevQ = [...this.turns].reverse().find((t) => t.role === "user")?.content ?? "";
 			const terms = tokenize(q.length < 30 && prevQ ? `${prevQ} ${q}` : q);
@@ -13827,7 +13827,7 @@ class AssistantSettingTab extends PluginSettingTab {
 						desc: 'Enables the "Was I mentioned?" quick question, and tags solo voice memos as you.',
 						help: "Lets the plugin tell which voice and which mentions are yours: it powers the 'Was I mentioned?' quick question and tags solo voice memos as spoken by you. Used only for matching; nothing beyond that is written into notes.",
 						build: (st) => {
-							st.addText((t) => t.setPlaceholder("Steve").setValue(s.yourName).onChange((v) => ((s.yourName = v.trim()), save())));
+							st.addText((t) => t.setPlaceholder("Your first name").setValue(s.yourName).onChange((v) => ((s.yourName = v.trim()), save())));
 						},
 					},
 					{
@@ -14287,7 +14287,7 @@ class AssistantSettingTab extends PluginSettingTab {
 										new Notice(
 											/sign in|not a bot|cookies/i.test(m)
 												? "Power Assistant: YouTube still will not talk to this device" +
-														(signedIn ? ", even with the saved session. Tell Steve, the session works in the window but not for a download." : ". Sign in above.")
+														(signedIn ? ", even with the saved session. Signing in again may help." : ". Sign in above.")
 												: "Power Assistant: " + m,
 											15000
 										);

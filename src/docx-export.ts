@@ -1,8 +1,8 @@
 // The .docx projection of a capture note. Pure mapping from the tested
 // ExportModel (pipeline.ts) onto the dolanmiu `docx` object model.
 //
-// Formatting is matched cell-for-cell to the AI-notetaker recap Steve's HR
-// manager shared (which the same library produced): Arial throughout on a
+// Formatting is matched cell-for-cell to a recap produced by a commercial
+// AI notetaker using this same library: Arial throughout on a
 // #262626 body; a 22pt bold navy title, a 12pt bold blue participant line, a
 // 10pt italic gray date; 14pt bold navy headings each underlined with a thin
 // blue rule; ▸ triangle bullets; and an Owner/Task/Deadline table with a navy

@@ -761,9 +761,9 @@ function displayLabel(speaker: string): string {
 
 /** "A: hello / B: hi" utterances → a speaker-labeled Markdown transcript,
  *  timestamped when segment times are known: **Speaker A [1:02]:** text.
- *  Imported transcripts carry real names, which render bare (**Steve [1:02]:**).
+ *  Imported transcripts carry real names, which render bare (**Dana [1:02]:**).
  *  A turn the diarizer heard two voices in at once renders as
- *  **Crosstalk (Steve + Speaker B) [1:02]:**, an honest label beats
+ *  **Crosstalk (Dana + Speaker B) [1:02]:**, an honest label beats
  *  confidently attributing overlapped speech to one name. The stamps are what
  *  audio-jump search anchors on. */
 export function formatUtterances(utts: Utterance[]): string {
@@ -776,7 +776,7 @@ export function formatUtterances(utts: Utterance[]): string {
 		.join("\n\n");
 }
 
-/** The voices inside a "Crosstalk (Steve + Speaker B)" label, dominant first,
+/** The voices inside a "Crosstalk (Dana + Speaker B)" label, dominant first,
  *  or null when the label is an ordinary speaker name. The inverse of the
  *  label formatUtterances renders for overlapped turns. */
 export function parseCrosstalkLabel(label: string): string[] | null {
@@ -857,7 +857,7 @@ export function assembleNote(opts: {
 	/** Rotated recordings: each part's start offset in ms, so stamp clicks can
 	 *  pick the right embedded player. Omitted for single-file captures. */
 	partsMs?: number[];
-	/** "Steve (57%), Rachel (26%)" talk-share line, when known. */
+	/** "Dana (57%), Alex (26%)" talk-share line, when known. */
 	speakersLine?: string | null;
 	/** "≈$0.04 (12 min audio, 18k tokens)" trust line, when known. */
 	cost?: string | null;
@@ -2514,7 +2514,7 @@ export function buildSpeakerNamePrompt(transcript: string, speakers: string[]): 
 	const system =
 		"You identify meeting participants from a diarized transcript. " +
 		"Reply with ONLY a JSON object mapping each speaker label to a real name grounded in the transcript " +
-		'(self-introductions, people addressing each other), or null when the transcript never reveals it. Example: {"A": "Steve", "B": null}. ' +
+		'(self-introductions, people addressing each other), or null when the transcript never reveals it. Example: {"A": "Dana", "B": null}. ' +
 		"Never guess from topic knowledge; a name must be evidenced in the words.";
 	const user = `Speaker labels: ${speakers.join(", ")}\n\nTranscript (may be truncated):\n"""\n${transcript.slice(0, 12000)}\n"""`;
 	return { system, user };
@@ -2541,7 +2541,7 @@ export function parseSpeakerNames(reply: string, speakers: string[]): Record<str
 /** Rewrite "**Label [1:02]:**" / "**Label:**" speaker labels to new names
  *  the general form behind both first-pass naming and retroactive renames.
  *  All renames happen in ONE pass, simultaneously: swapping two people
- *  ({Rachel: "Steve", Steve: "Rachel"}) must never collapse them into one. */
+ *  ({Alex: "Dana", Dana: "Alex"}) must never collapse them into one. */
 export function renameSpeakerLabels(text: string, mapping: Record<string, string>): string {
 	const entries = Object.entries(mapping).filter(([from, to]) => to.trim() && from !== to.trim());
 	if (!entries.length) return text;
@@ -2641,7 +2641,7 @@ export interface TranscriptSpeakerLine {
 	nameTo: number;
 	stampFrom?: number;
 	stampTo?: number;
-	/** For a "Crosstalk (Steve + Speaker B)" label: the voices inside it,
+	/** For a "Crosstalk (Dana + Speaker B)" label: the voices inside it,
 	 *  dominant first. Ordinary speaker lines leave this unset. */
 	voices?: string[];
 }
@@ -2776,7 +2776,7 @@ export function talkShares(utts: Utterance[]): { speaker: string; share: number;
 		.sort((a, b) => b.share - a.share);
 }
 
-/** "Steve (57%), Rachel (26%), and 9 more under 1%", null when there's only
+/** "Dana (57%), Alex (26%), and 9 more under 1%", null when there's only
  *  one voice (a memo needs no share line). */
 export function formatSpeakersLine(
 	shares: { speaker: string; share: number }[],

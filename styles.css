@@ -307,21 +307,28 @@
 	cursor: pointer;
 }
 
+/* The [m:ss] stamp is a link, and Obsidian paints link tokens from variables:
+   .cm-underline reads --link-decoration, and .cm-link/.cm-url .cm-underline
+   read --link-external-decoration and --link-external-color. Setting those on
+   the transcript line is what turns the underline and the external-link color
+   off here: Obsidian's own rules still win, they just resolve to nothing.
+   Outranking them instead would mean chasing (0,4,0) selectors that target
+   .cm-underline, a child the rules below never matched, which is what the
+   override flags here were really standing in for. */
+.cm-line.pa-lp-tr {
+	--link-decoration: none;
+	--link-decoration-hover: none;
+	--link-external-decoration: none;
+	--link-external-color: var(--text-muted);
+}
+
 .cm-line.pa-lp-tr .pa-lp-tr-stamp {
-	color: var(--text-muted) !important;
+	color: var(--text-muted);
 	font-weight: 400;
 	font-size: 0.9em;
 	margin-left: 10px;
-	text-decoration: none !important;
+	text-decoration: none;
 	cursor: pointer;
-}
-
-/* kill any link-token underline/color CodeMirror paints on the [m:ss] stamp */
-.cm-line.pa-lp-tr .cm-link,
-.cm-line.pa-lp-tr .cm-underline,
-.cm-line.pa-lp-tr .cm-formatting-link,
-.cm-line.pa-lp-tr .cm-url {
-	text-decoration: none !important;
 }
 
 .pa-tr-avatar.pa-lp-avatar {
