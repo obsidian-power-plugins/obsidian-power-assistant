@@ -88,7 +88,7 @@ export const TXN_CATEGORIES = [
  *  isolation, and soft wrapping. Amazon wraps order numbers in RTL embedding
  *  marks and pads subjects with zero-width joiners, so these have to go before
  *  anything tries to read a value. */
-const INVISIBLE = /[­͏​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|\u034F/g;
 
 /** Headings that introduce "things you did not buy". Everything from the first
  *  one to the end of the body is dropped: in every template seen so far these
@@ -662,9 +662,11 @@ export function decodeQuotedPrintable(s: string): string {
 function fromBase64(s: string): string {
 	const clean = s.replace(/\s+/g, "");
 	try {
-		const g = globalThis as unknown as { Buffer?: { from(s: string, enc: string): { toString(enc: string): string } }; atob?(s: string): string };
-		if (g.Buffer) return g.Buffer.from(clean, "base64").toString("latin1");
-		if (g.atob) return g.atob(clean);
+		// typeof guards rather than a global object: this has to run both under
+		// node for the tests and inside Obsidian, and neither name is declared in
+		// the other environment
+		if (typeof Buffer !== "undefined") return Buffer.from(clean, "base64").toString("latin1");
+		if (typeof atob !== "undefined") return atob(clean);
 	} catch {
 		/* fall through to empty */
 	}

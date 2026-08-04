@@ -3607,7 +3607,7 @@ export function coalesceUtterances(utts: Utterance[]): Utterance[] {
  *  "Name: text" prefixes (Zoom, Otter SRT); strips markup tags. */
 export function parseCues(src: string): Utterance[] {
 	const utts: Utterance[] = [];
-	for (const block of src.replace(/\r/g, "").replace(/^﻿/, "").split(/\n\s*\n+/)) {
+	for (const block of src.replace(/\r/g, "").replace(/^\uFEFF/, "").split(/\n\s*\n+/)) {
 		const lines = block.split("\n").filter((l) => l.trim().length);
 		const ti = lines.findIndex((l) => l.includes("-->"));
 		if (ti < 0) continue;
@@ -3648,7 +3648,7 @@ export function parseOtterTxt(src: string): Utterance[] {
 	const utts: Utterance[] = [];
 	let current: Utterance | null = null;
 	let atBoundary = true;
-	for (const raw of src.replace(/\r/g, "").replace(/^﻿/, "").split("\n")) {
+	for (const raw of src.replace(/\r/g, "").replace(/^\uFEFF/, "").split("\n")) {
 		const line = raw.trim();
 		if (!line) {
 			atBoundary = true;
@@ -5376,7 +5376,7 @@ export function parseActionRow(line: string): { owner: string; task: string; dea
 		.replace(/^[-*+]\s+\[[ xX]\]\s+/, "")
 		.replace(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, "")
 		.replace(/[📅⏳🛫✅]️?\s*\d{4}-\d{2}-\d{2}/gu, "") // any dated Tasks token (u flag keeps emoji pairs intact)
-		.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{FE0F}]/gu, "") // stray emoji/priority marks
+		.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}]|\u{FE0F}/gu, "") // stray emoji/priority marks
 		.replace(/\s{2,}/g, " ")
 		.trim();
 	return { owner: owner === "Unassigned" ? "" : owner, task, deadline };
