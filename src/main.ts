@@ -23,6 +23,7 @@ import {
 	TFolder,
 	WorkspaceLeaf,
 	editorLivePreviewField,
+	getLinkpath,
 	loadPdfJs,
 	normalizePath,
 	requestUrl,
@@ -3653,7 +3654,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (tagInTranscript) {
 			// the Otter handoff: open the transcript itself for tagging
 			const f = this.app.vault.getAbstractFileByPath(opts.notePath);
-			if (f instanceof TFile) await this.app.workspace.getLeaf(false).openFile(f);
+			if (f instanceof TFile) await showNote(this.app, f);
 			this.tagHandoff();
 		}
 	}
@@ -3824,7 +3825,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		}
 		const existing = stripProgress(await this.app.vault.read(target));
 		await this.app.vault.modify(target, mergeMeetingCapture(existing, note));
-		await this.app.workspace.getLeaf(false).openFile(target);
+		await showNote(this.app, target);
 	}
 
 	/** Show or clear the in-note "working" indicator (a spinner callout) while a
@@ -3948,7 +3949,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				return;
 			}
 			await this.app.vault.modify(existing, md);
-			if (open) await this.app.workspace.getLeaf(false).openFile(existing);
+			if (open) await showNote(this.app, existing);
 			return;
 		}
 		const created = await this.app.vault.create(path, md);
@@ -8312,7 +8313,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 			await this.app.vault.process(existing, () => note);
 			new Notice(`Power Assistant: created ${existing.basename}.`);
-			await this.app.workspace.getLeaf(false).openFile(existing);
+			await showNote(this.app, existing);
 			return;
 		}
 		const created = await this.app.vault.create(notePath, note);
@@ -10849,6 +10850,62 @@ class AssistantChatView extends ItemView {
 	}
 }
 
+/**
+ * The main-area tab already showing this path, if there is one.
+ *
+ * Asked through `getViewState()` rather than `leaf.view.file`, because every tab
+ * you are not standing in is deferred since 1.7.2: its view is a stand-in that
+ * holds no file, and reaching for one to ask would load every tab in the window.
+ * The view state carries the path whether the view is real or not. That is also
+ * why the editor lookups elsewhere in this file are not this function: they want
+ * a live buffer to write through and are right to find nothing when there is no
+ * view, while this one only wants to know where a note is.
+ *
+ * Main-area leaves only. A note showing in a sidebar is not a tab, and a note
+ * deliberately popped out into a window of its own should not have a capture
+ * pulling focus to another window behind your back.
+ */
+function leafShowing(app: App, path: string): WorkspaceLeaf | null {
+	const hits: WorkspaceLeaf[] = [];
+	app.workspace.iterateRootLeaves((leaf) => {
+		const open = leaf.getViewState().state?.file;
+		if (typeof open === "string" && open === path) hits.push(leaf);
+	});
+	return hits[0] ?? null;
+}
+
+/** Step to the tab already holding this path, if there is one. The open itself
+ *  is left to the caller, so an `openLinkText` that follows lands in the tab
+ *  this just made active and keeps Obsidian's own subpath handling. */
+async function focusOpenTab(app: App, path: string): Promise<void> {
+	const open = leafShowing(app, path);
+	if (!open) return;
+	await app.workspace.revealLeaf(open);
+	app.workspace.setActiveLeaf(open, { focus: true });
+}
+
+/**
+ * Show a note: step to the tab already holding it, or open it where you are.
+ *
+ * `getLeaf(false)` means "the tab I am standing in" and knows nothing about the
+ * tab the note is already open in, so finishing a capture into a note that was
+ * already open hands you a second copy of it: two scroll positions, two undo
+ * histories, and edits landing in whichever one you looked at last. Worse here
+ * than most places, because a meeting note is usually open precisely because you
+ * were typing in it while the recording ran.
+ */
+async function showNote(app: App, f: TFile): Promise<WorkspaceLeaf> {
+	const open = leafShowing(app, f.path);
+	if (open) {
+		await app.workspace.revealLeaf(open);
+		app.workspace.setActiveLeaf(open, { focus: true });
+		return open;
+	}
+	const leaf = app.workspace.getLeaf(false);
+	await leaf.openFile(f);
+	return leaf;
+}
+
 /** Obsidian wires [[wiki-link]] clicks inside its own markdown views, but not
  *  inside a panel or modal we render into ourselves: the citation renders as a
  *  proper link and then does nothing when clicked. Open it by hand. Delegated
@@ -10862,7 +10919,19 @@ function wireInternalLinks(app: App, container: HTMLElement, sourcePath = "") {
 		evt.preventDefault();
 		// data-href carries the real target; href and the label are fallbacks
 		const href = link.getAttribute("data-href") || link.getAttribute("href") || link.textContent || "";
-		if (href) void app.workspace.openLinkText(href, sourcePath, evt.ctrlKey || evt.metaKey);
+		if (!href) return;
+		const newTab = evt.ctrlKey || evt.metaKey;
+		void (async () => {
+			// A citation usually points at a note you already have open, this being
+			// the panel that just answered a question about it. Step to that tab
+			// first and openLinkText lands in it, subpath handling and all, instead
+			// of laying a second copy over whatever you were looking at.
+			if (!newTab) {
+				const dest = app.metadataCache.getFirstLinkpathDest(getLinkpath(href), sourcePath);
+				if (dest) await focusOpenTab(app, dest.path);
+			}
+			await app.workspace.openLinkText(href, sourcePath, newTab);
+		})();
 	});
 }
 
