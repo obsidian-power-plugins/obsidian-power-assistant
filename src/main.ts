@@ -109,14 +109,14 @@ const YOUTUBE_REACH_PROBE = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
  *  diverges from the running instance until a real reload. Bump with manifest. */
 const PC_BUILD = "1.89.5";
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
 /** Race a promise against a deadline. Used to timebox the awaits on the
  *  recording-teardown path: a wedged blob read, vault write, or flush must
  *  never leave a stop hanging forever (the audio survives as the partial). */
 const withTimeout = <T>(p: Promise<T>, ms: number) => {
 	void p.catch(() => {}); // a rejection after the race is lost must not go unhandled
-	return Promise.race([p, new Promise<"pcap-timeout">((res) => setTimeout(() => res("pcap-timeout"), ms))]);
+	return Promise.race([p, new Promise<"pcap-timeout">((res) => window.setTimeout(() => res("pcap-timeout"), ms))]);
 };
 
 /** How long to allow for reading or writing `bytes` of recorded audio.
@@ -154,7 +154,6 @@ import {
 	ExtractionKey,
 	Moment,
 	SearchIndex,
-	TEMPLATES,
 	Utterance,
 	allTemplates,
 	applySpeakerNames,
@@ -354,7 +353,6 @@ import {
 	stampSecsOnLine,
 	stripTranscriptCallout,
 	fmtClock,
-	currentTurn,
 	interpolatedTime,
 	SPEAKER_PALETTE,
 	renameSpeakerLabels,
@@ -376,7 +374,6 @@ import {
 	parseTimedTextXml,
 	renderFilename,
 	seriesKey,
-	speakerLetters,
 	tokenize,
 	ensureUrlScheme,
 	mergeForSave,
@@ -423,7 +420,6 @@ import {
 	chunkMailForIndex,
 	isoDate,
 	mailHitPath,
-	mailIdFromPath,
 	linkifyMailCitations,
 	mailWindowStats,
 	planWindowUpdate,
@@ -840,7 +836,7 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
 			return await fn();
 		} catch (e) {
 			if (i >= attempts - 1 || !isRetryableError(e)) throw e;
-			await new Promise((r) => setTimeout(r, retryDelayMs(i)));
+			await new Promise((r) => window.setTimeout(r, retryDelayMs(i)));
 		}
 	}
 }
@@ -1270,7 +1266,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			id: "import-transcript", icon: "file-text",
 			name: "Import a transcript file (Otter, Teams, Zoom)…",
 			callback: () => {
-				const input = document.createElement("input");
+				const input = createEl("input");
 				input.type = "file";
 				input.accept = ".vtt,.srt,.txt";
 				input.onchange = () => {
@@ -3297,7 +3293,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (this.settings.audioRetention !== "trash") return;
 		for (const f of files) {
 			try {
-				await this.app.vault.trash(f, true); // system trash = recoverable
+				await this.app.fileManager.trashFile(f); // honors the vault deletion preference
 			} catch (e) {
 				console.warn("Power Assistant: could not trash", f.path, e);
 			}
@@ -6719,7 +6715,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		);
 		const id = (created.json as { id: string }).id;
 		for (let tries = 0; tries < 200; tries++) {
-			await new Promise((r) => setTimeout(r, 3000));
+			await new Promise((r) => window.setTimeout(r, 3000));
 			const res = await withRetry(() =>
 				requestUrl({ url: `https://api.assemblyai.com/v2/transcript/${id}`, headers: { authorization: key }, throw: true })
 			);
@@ -6846,7 +6842,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			this.directProcess.delete(tmpPath);
 			if (tmp)
 				try {
-					await this.app.vault.trash(tmp, true);
+					await this.app.fileManager.trashFile(tmp);
 				} catch {
 					/* already gone */
 				}
@@ -7473,7 +7469,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			if (tmpPath) this.directProcess.delete(tmpPath);
 			if (tmp)
 				try {
-					await this.app.vault.trash(tmp, true);
+					await this.app.fileManager.trashFile(tmp);
 				} catch {
 					/* already gone */
 				}
@@ -7602,7 +7598,12 @@ export default class PowerAssistantPlugin extends Plugin {
 			const fm = file ? (this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined) : undefined;
 			const wants = !!file && !!refreshableSource(fm);
 			if (wants && !had) {
-				const el = view.addAction("refresh-cw", "Refresh this post's counts", () => void this.refreshPostStats(view.file as TFile));
+				// read the leaf's file when the button is pressed, not when it is
+				// built, so the action follows a tab that navigates
+				const el = view.addAction("refresh-cw", "Refresh this post's counts", () => {
+					const f = view.file;
+					if (f instanceof TFile) void this.refreshPostStats(f);
+				});
 				el.addClass("pa-refresh-stats");
 			} else if (!wants && had) {
 				had.remove();
@@ -7761,6 +7762,8 @@ export default class PowerAssistantPlugin extends Plugin {
 		// string parsed out of thin air does not have, so links would otherwise
 		// come out pointing nowhere
 		if (!doc.querySelector("base")) {
+			// createEl is not reachable here: this document came from DOMParser,
+			// so it has no window, and the element has to belong to it anyway
 			const base = doc.createElement("base");
 			base.setAttribute("href", url);
 			doc.head?.appendChild(base);
@@ -8679,7 +8682,7 @@ class DeviceCodeModal extends Modal {
 			cls: "ptc-modal-desc",
 			text: "Sign in with your Microsoft account so Power Assistant can read your calendar. Open the page, enter the code, and approve. This window finishes automatically.",
 		});
-		c.createEl("div", { cls: "ptc-devicecode", text: this.dc.user_code });
+		c.createDiv({ cls: "ptc-devicecode", text: this.dc.user_code });
 		const row = c.createDiv({ cls: "ptc-modal-btns ptc-left" });
 		row.createEl("button", { text: "Copy code" }).addEventListener("click", () => {
 			void navigator.clipboard.writeText(this.dc.user_code);
@@ -8751,7 +8754,7 @@ class CalendarPickerModal extends Modal {
 		this.listEl.empty();
 		const rows = this.invites.map((inv, i) => ({ inv, i })).filter((x) => !this.filter || x.inv.title.toLowerCase().includes(this.filter));
 		if (!rows.length) {
-			this.listEl.createEl("div", { cls: "pe-empty", text: "No matching meetings." });
+			this.listEl.createDiv({ cls: "pe-empty", text: "No matching meetings." });
 			return;
 		}
 		for (const { inv, i } of rows) {
@@ -8765,8 +8768,8 @@ class CalendarPickerModal extends Modal {
 				if (cb.checked) this.checked.add(i);
 				else this.checked.delete(i);
 			});
-			label.createEl("div", { cls: "ptc-cal-title", text: inv.title });
-			label.createEl("div", { cls: "ptc-cal-meta", text: [inv.date, inv.when, inv.location].filter(Boolean).join("  ·  ") });
+			label.createDiv({ cls: "ptc-cal-title", text: inv.title });
+			label.createDiv({ cls: "ptc-cal-meta", text: [inv.date, inv.when, inv.location].filter(Boolean).join("  ·  ") });
 			row.createEl("button", { text: "Record", attr: { "aria-label": "Create the note and start recording now" } }).addEventListener("click", () => {
 				this.close();
 				void this.plugin.createMeetingNote({
@@ -9028,7 +9031,7 @@ class ScreensModal extends Modal {
 			)
 			.addButton((b) =>
 				b.setButtonText("Choose a file…").onClick(() => {
-					const input = document.createElement("input");
+					const input = createEl("input");
 					input.type = "file";
 					input.accept = "video/mp4,video/webm,video/x-matroska,video/quicktime,.mp4,.webm,.mkv,.mov,.m4v";
 					input.onchange = () => {
@@ -9743,7 +9746,7 @@ async function seekMedia(el: HTMLMediaElement, at: number, ms: number): Promise<
  *  seeks it hundreds of times, so opening it per frame would pay the metadata
  *  round trip every time. */
 async function openVideo(url: string): Promise<HTMLVideoElement> {
-	const el = document.createElement("video");
+	const el = createEl("video");
 	el.muted = true;
 	el.preload = "auto";
 	el.src = url;
@@ -9788,7 +9791,7 @@ async function frameBytes(el: HTMLVideoElement, maxWidth: number): Promise<{ byt
 	const scale = Math.min(1, maxWidth / el.videoWidth);
 	const w = Math.max(1, Math.round(el.videoWidth * scale));
 	const h = Math.max(1, Math.round(el.videoHeight * scale));
-	const canvas = document.createElement("canvas");
+	const canvas = createEl("canvas");
 	canvas.width = w;
 	canvas.height = h;
 	const ctx = canvas.getContext("2d");
@@ -9854,7 +9857,7 @@ async function scanScenes(
 	threshold: number,
 	onProgress: (atMs: number, ofMs: number, hits: number) => boolean
 ): Promise<FrameSample[]> {
-	const canvas = document.createElement("canvas");
+	const canvas = createEl("canvas");
 	canvas.width = SCAN_W;
 	canvas.height = SCAN_H;
 	const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -9901,7 +9904,7 @@ async function pngForDocx(url: string): Promise<ResolvedImage> {
 	const w = img.naturalWidth;
 	const h = img.naturalHeight;
 	if (!w || !h) throw new Error("that image has no size.");
-	const canvas = document.createElement("canvas");
+	const canvas = createEl("canvas");
 	canvas.width = w;
 	canvas.height = h;
 	const ctx = canvas.getContext("2d");
@@ -10077,7 +10080,7 @@ class TranscriptAvatarWidget extends WidgetType {
 		return o.name === this.name && o.glyph === this.glyph && o.color === this.color && o.hasEmoji === this.hasEmoji && !o.onClick === !this.onClick;
 	}
 	toDOM() {
-		const s = document.createElement("span");
+		const s = createSpan();
 		s.className = "pa-tr-avatar pa-lp-avatar" + (this.hasEmoji ? " has-emoji" : "") + (this.onClick ? "" : " pa-lp-avatar-x");
 		s.style.setProperty("--pa-speaker-color", this.color);
 		s.textContent = this.glyph;
@@ -10106,7 +10109,7 @@ class TranscriptBreakWidget extends WidgetType {
 		return true;
 	}
 	toDOM() {
-		const br = document.createElement("br");
+		const br = createEl("br");
 		br.className = "pa-lp-br";
 		return br;
 	}
@@ -10337,12 +10340,12 @@ class TranscriptPlayer {
 		btn("rotate-cw", "Forward 5 seconds", () => (this.audio.currentTime = Math.min(this.dur() || 1e9, this.audio.currentTime + 5)), "5");
 		this.speedBtn = bar.createEl("button", { cls: "pa-player-btn pa-player-speed", text: "1x", attr: { "aria-label": "Playback speed" } });
 		this.speedBtn.addEventListener("click", () => this.cycleSpeed());
-		this.curEl = bar.createEl("span", { cls: "pa-player-time", text: "0:00" });
+		this.curEl = bar.createSpan({ cls: "pa-player-time", text: "0:00" });
 		const track = bar.createDiv({ cls: "pa-player-track" });
 		this.fill = track.createDiv({ cls: "pa-player-fill" });
 		this.knob = track.createDiv({ cls: "pa-player-knob" });
 		this.tip = track.createDiv({ cls: "pa-player-tip" });
-		this.totEl = bar.createEl("span", { cls: "pa-player-time", text: "0:00" });
+		this.totEl = bar.createSpan({ cls: "pa-player-time", text: "0:00" });
 		this.wireTrack(track);
 		const on = (ev: string, fn: () => void) => {
 			this.audio.addEventListener(ev, fn);
@@ -10456,14 +10459,14 @@ function decorateStamps(root: HTMLElement, partsMs?: number[]) {
 		const parent = text.parentElement;
 		if (!parent || parent.closest("a, code, pre, .ptc-stamp")) continue;
 		const s = text.nodeValue ?? "";
-		const frag = document.createDocumentFragment();
+		const frag = createFragment();
 		let at = 0;
 		STAMP_RE.lastIndex = 0;
 		let m: RegExpExecArray | null;
 		while ((m = STAMP_RE.exec(s))) {
 			if (m.index > at) frag.appendChild(document.createTextNode(s.slice(at, m.index)));
 			const secs = parseStamp(m[1]);
-			const a = document.createElement("a");
+			const a = createEl("a");
 			a.className = "ptc-stamp";
 			a.textContent = m[0];
 			a.setAttribute("aria-label", "Jump the recording to " + m[1]);
@@ -10562,7 +10565,7 @@ function decorateTurnLabel(
 	// a colored avatar (the speaker's emoji, or their initial) before the label
 	const p = strong.parentElement;
 	if (p && !p.querySelector(".pa-tr-avatar")) {
-		const av = document.createElement("span");
+		const av = createSpan();
 		av.className = "pa-tr-avatar";
 		av.dataset.speaker = name;
 		av.style.setProperty("--pa-speaker-color", color);
@@ -12306,7 +12309,7 @@ class SpeakerEmojiModal extends Modal {
 					this.close();
 				});
 			}
-			if (!shown) grid.createEl("div", { cls: "pa-emoji-empty", text: "No matches. Paste your own below." });
+			if (!shown) grid.createDiv({ cls: "pa-emoji-empty", text: "No matches. Paste your own below." });
 		};
 		render("");
 		search.addEventListener("input", () => render(search.value));
