@@ -266,11 +266,15 @@
 .markdown-source-view.mod-cm6 .cm-line.pa-lp-tr {
 	background: transparent;
 	/* hanging indent: padding-left (32) equals the avatar's 24px width + its 8px
-	   right margin, and text-indent pulls the first row back by that same 32, so
-	   the avatar's left edge lands at the line start (aligned with the note's
-	   headings/body) while the name and wrapped body sit in the column to its right */
+	   right margin, and the avatar carries a matching -32px left margin, so its
+	   left edge lands at the line start (aligned with the note's headings/body)
+	   while the name and wrapped body sit in the column to its right.
+	   The pull lives on the avatar rather than on text-indent here because the
+	   directory's CSS lint flags text-indent as only partially supported. A
+	   negative margin on the first inline element gives the same geometry and,
+	   unlike absolute positioning, keeps the avatar in flow so the row still
+	   sizes itself to the 24px circle. */
 	padding: 12px 10px 12px 32px;
-	text-indent: -32px;
 }
 
 /* the continuation line of a turn whose body spans more than one Markdown line:
@@ -339,8 +343,10 @@
 	height: 24px;
 	border-radius: 50%;
 	margin-right: 8px;
+	/* pulls this first inline element back into the gutter the line's padding
+	   reserves for it; see the hanging-indent note on .cm-line.pa-lp-tr */
+	margin-left: -32px;
 	vertical-align: middle;
-	text-indent: 0;
 	background: var(--pa-speaker-color, var(--interactive-normal));
 	color: #fff;
 	font-size: 12px;
