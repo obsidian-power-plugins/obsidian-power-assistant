@@ -1552,9 +1552,34 @@ export function isYoutubeCookieDomain(domain: string): boolean {
 	return /(^|\.)(youtube\.com|youtube-nocookie\.com|google\.com|googleapis\.com|googleusercontent\.com)$/.test(d);
 }
 
+/**
+ * A URL on its way to becoming an argument to another program, or a refusal.
+ *
+ * yt-dlp reads its argv the way every command-line program does: a word
+ * beginning with a dash is an option, wherever it appears. yt-dlp's options
+ * include ones that run commands, so a "URL" of `--exec=...` arriving in the
+ * last position would not be fetched, it would be obeyed.
+ *
+ * Nothing reaches these builders that way today. Every entry point goes through
+ * `ensureUrlScheme`, and a frontmatter `source` has to match http(s) before a
+ * refresh will look at it. But that safety lives several calls above the one
+ * line that starts a process, held up by two functions that have other jobs and
+ * could reasonably be changed by someone who does not know this depends on
+ * them. So it is asserted here instead, in the last place the string is still
+ * an ordinary value: one scheme, one check, next to the argv it is going into.
+ *
+ * Throwing rather than repairing. Every real caller already satisfies this, so
+ * anything that does not is a bug upstream, and quietly rewriting it into
+ * something safe-looking would hide the bug rather than surface it.
+ */
+function urlArg(url: string): string {
+	if (!/^https?:\/\//i.test(url)) throw new Error("Power Assistant only fetches http and https links.");
+	return url;
+}
+
 /** The yt-dlp argv that reads a post's metadata without touching the media. */
 export function ytDlpInfoArgs(url: string, cookies: CookieBrowser = "", cookieFile = ""): string[] {
-	return ["--dump-json", "--no-playlist", "--no-warnings", ...cookieArgs(cookies, cookieFile), url];
+	return ["--dump-json", "--no-playlist", "--no-warnings", ...cookieArgs(cookies, cookieFile), urlArg(url)];
 }
 
 /** The yt-dlp argv that writes a video's subtitles beside `outTemplate` and
@@ -1588,7 +1613,7 @@ export function ytDlpSubsArgs(url: string, outTemplate: string, cookies: CookieB
 		YTDLP_META_PRINT,
 		"--no-simulate",
 		...cookieArgs(cookies, cookieFile),
-		url,
+		urlArg(url),
 	];
 }
 
@@ -1669,7 +1694,7 @@ export function captionsToText(vtt: string): string {
  *  whatever the chosen format turns out to be, and --no-simulate is required
  *  because --print otherwise implies a dry run. */
 export function ytDlpAudioArgs(url: string, outTemplate: string, cookies: CookieBrowser = "", cookieFile = ""): string[] {
-	return ["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "--no-progress", "-o", outTemplate, "--print", "after_move:filepath", "--no-simulate", ...cookieArgs(cookies, cookieFile), url];
+	return ["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "--no-progress", "-o", outTemplate, "--print", "after_move:filepath", "--no-simulate", ...cookieArgs(cookies, cookieFile), urlArg(url)];
 }
 
 /* ---------------- posts with no video ---------------- */

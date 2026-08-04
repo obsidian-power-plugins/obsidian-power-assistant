@@ -2,6 +2,17 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.89.13
+
+### Security
+
+- **A link has to be a link before it can become an argument to yt-dlp.** yt-dlp reads a word beginning with a dash as an option wherever it appears in its arguments, and its options include ones that run commands, so a "URL" of `--exec=...` would have been obeyed rather than fetched. Nothing could reach it that way: every capture goes through `ensureUrlScheme`, and refreshing a note's stats requires its `source` property to already start with `http`. But that safety sat several calls above the one line that starts a program, resting on two functions that have other jobs, and a reasonable change to either would have quietly removed it. The check now lives in the argument builders themselves, where the URL is still an ordinary string: an `http` or `https` scheme, or the capture stops with an error. Real links are unaffected, dashes inside a URL included.
+- `shell: false` is now passed explicitly when yt-dlp is started. It was already the default, and the difference between running a program and handing a string to a command interpreter should not have to be read out of an absence.
+
+### Changed
+
+- The README lists what the community catalog's scan reports about this plugin, what each one is actually for, and where in the source to check it: starting yt-dlp, listing vault files, reading and writing the clipboard, and the temporary files written outside the vault.
+
 ## 1.89.9
 
 ### Changed

@@ -202,7 +202,7 @@ eq(youtubeVideoId("https://www.youtube.com/shorts/e8CW4_yU5Ko"), "e8CW4_yU5Ko", 
 eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield null");
 {
 	// --- capture from a link ---
-	const { xStatusId, isXUrl, postTitleFromText, parseMediaInfo, mediaProps, ytDlpInvocations, ytDlpInfoArgs, ytDlpAudioArgs } = require("../src/pipeline");
+	const { xStatusId, isXUrl, postTitleFromText, parseMediaInfo, mediaProps, ytDlpInvocations, ytDlpInfoArgs, ytDlpAudioArgs, ytDlpSubsArgs } = require("../src/pipeline");
 	const { hostOf, mediaSiteFor, routeFor, cookieArgs, renderFolder, parseWebMeta, webProps, siteNameFromUrl, cleanArticleMarkdown } = require("../src/pipeline");
 
 	// routing: YouTube keeps its free-caption path, known media sites go to
@@ -296,10 +296,10 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 
 	eq(cookieArgs(""), [], "cookies off adds no arguments at all");
 	eq(cookieArgs("firefox").join(" "), "--cookies-from-browser firefox", "a chosen browser becomes the yt-dlp flag");
-	ok(!ytDlpInfoArgs("U").includes("--cookies-from-browser"), "the info call carries no cookie flag by default");
-	ok(ytDlpInfoArgs("U", "chrome").includes("chrome"), "the info call can borrow cookies");
-	ok(ytDlpAudioArgs("U", "o", "edge").includes("edge"), "the download can borrow cookies");
-	eq(ytDlpAudioArgs("U", "o", "edge").slice(-1)[0], "U", "the URL still goes last once cookies are added");
+	ok(!ytDlpInfoArgs("https://u").includes("--cookies-from-browser"), "the info call carries no cookie flag by default");
+	ok(ytDlpInfoArgs("https://u", "chrome").includes("chrome"), "the info call can borrow cookies");
+	ok(ytDlpAudioArgs("https://u", "o", "edge").includes("edge"), "the download can borrow cookies");
+	eq(ytDlpAudioArgs("https://u", "o", "edge").slice(-1)[0], "https://u", "the URL still goes last once cookies are added");
 
 	// yt-dlp invocation: pip parks the launcher off PATH, so the module form is
 	// the one that saves a stock install from having to configure anything
@@ -307,15 +307,39 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(ytDlpInvocations("C:\\tools\\yt-dlp.exe")[0].cmd, "C:\\tools\\yt-dlp.exe", "a configured path is tried first");
 	eq(ytDlpInvocations("  ").length, 3, "a blank setting is ignored rather than run as an empty command");
 	eq(ytDlpInvocations("").find((i: { cmd: string }) => i.cmd === "python").pre.join(" "), "-m yt_dlp", "the Python form runs yt_dlp as a module");
-	ok(ytDlpInfoArgs("U").includes("--dump-json") && ytDlpInfoArgs("U").includes("U"), "the info call dumps json for the URL");
-	ok(!ytDlpInfoArgs("U").includes("-o"), "the info call never writes a file");
-	const dl = ytDlpAudioArgs("U", "/tmp/x.%(ext)s");
+	ok(ytDlpInfoArgs("https://u").includes("--dump-json") && ytDlpInfoArgs("https://u").includes("https://u"), "the info call dumps json for the URL");
+	ok(!ytDlpInfoArgs("https://u").includes("-o"), "the info call never writes a file");
+	const dl = ytDlpAudioArgs("https://u", "/tmp/x.%(ext)s");
 	eq(dl[dl.indexOf("-f") + 1], "bestaudio/best", "audio-only is preferred, with a muxed fallback");
 	eq(dl[dl.indexOf("-o") + 1], "/tmp/x.%(ext)s", "the output template is passed through");
 	ok(dl.includes("--no-simulate"), "--no-simulate is present, or --print would turn the download into a dry run");
 	eq(dl[dl.indexOf("--print") + 1], "after_move:filepath", "the final path is printed so the caller can find the file");
-	eq(dl[dl.length - 1], "U", "the URL goes last");
+	eq(dl[dl.length - 1], "https://u", "the URL goes last");
 	ok(dl.includes("--no-playlist"), "a multi-video post captures only the linked video");
+
+	// --- nothing but a link becomes an argument ---
+	// yt-dlp reads a leading dash as an option wherever it appears, and its
+	// options include ones that run commands. The URL is the last argument, so
+	// the check belongs here, in the last place it is still an ordinary string.
+	const threw = (f: () => unknown): boolean => {
+		try {
+			f();
+			return false;
+		} catch {
+			return true;
+		}
+	};
+	ok(threw(() => ytDlpInfoArgs("--exec=calc.exe")), "an option in place of a URL is refused, not passed along");
+	ok(threw(() => ytDlpAudioArgs("--exec=calc.exe", "/tmp/x")), "the download call refuses it too");
+	ok(threw(() => ytDlpSubsArgs("--exec=calc.exe", "/tmp/x")), "and so does the caption call");
+	ok(threw(() => ytDlpInfoArgs("-o/tmp/anywhere")), "a short option is refused as well");
+	ok(threw(() => ytDlpInfoArgs("file:///C:/secrets.txt")), "a scheme that is not http(s) is refused");
+	ok(threw(() => ytDlpInfoArgs("")), "and so is nothing at all");
+	ok(!threw(() => ytDlpInfoArgs("http://x.com/1")), "a plain http link is fine");
+	ok(!threw(() => ytDlpInfoArgs("HTTPS://X.COM/1")), "the scheme check does not care about case");
+	// A dash is only dangerous in the first position: inside a URL it is a
+	// character like any other, and refusing these would break real links.
+	ok(!threw(() => ytDlpInfoArgs("https://x.com/a-b--c?d=-e")), "dashes inside a link are left alone");
 
 	// --- posts with no video ---
 	// yt-dlp refuses a post that carries no media, which is most posts. That is a

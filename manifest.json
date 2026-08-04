@@ -1,7 +1,7 @@
 {
 	"id": "powerassistant",
 	"name": "Power Assistant",
-	"version": "1.89.12",
+	"version": "1.89.13",
 	"minAppVersion": "1.8.7",
 	"description": "Record and summarize meetings, import your calendar, track people and commitments, ask your notes anything, and export polished recaps.",
 	"author": "Power Plugins",

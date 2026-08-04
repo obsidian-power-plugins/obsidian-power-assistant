@@ -7103,7 +7103,16 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Run yt-dlp and hand back its stdout, trying each way of invoking it until
 	 *  one exists on this machine. A pip install routinely leaves the launcher off
 	 *  PATH, so "not on PATH" is not the same as "not installed" and the Python
-	 *  module form gets a turn before this gives up on the user. */
+	 *  module form gets a turn before this gives up on the user.
+	 *
+	 *  The only place this plugin starts a program, and it starts one program:
+	 *  yt-dlp, which the user installed themselves and can point at explicitly in
+	 *  settings. `shell: false` is execFile's default and is written out anyway,
+	 *  because it is the difference between running a program and handing a
+	 *  string to a command interpreter, and that should not have to be inferred
+	 *  from an absence. Every argument is built by the `ytDlp*Args` functions in
+	 *  pipeline.ts, where the URL is checked for an http(s) scheme before it can
+	 *  become an argument at all. */
 	private runYtDlp(args: string[], timeoutMs: number): Promise<string> {
 		const cp = this.nodeCp();
 		if (!cp) return Promise.reject(new Error("capturing an X post needs the desktop app."));
@@ -7111,7 +7120,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const attempt = (i: number): Promise<string> =>
 			new Promise<string>((resolve, reject) => {
 				const t = tries[i];
-				cp.execFile(t.cmd, [...t.pre, ...args], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+				cp.execFile(t.cmd, [...t.pre, ...args], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, shell: false }, (err, stdout, stderr) => {
 					if (!err) return resolve(stdout);
 					// A missing binary (ENOENT) or a Python without the module means
 					// only that this particular way of calling yt-dlp is not the one;

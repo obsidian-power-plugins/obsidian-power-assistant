@@ -163,6 +163,19 @@ Power Assistant talks to external services **only when you use the matching feat
 - **Document processing**: OCR runs locally through the Power Extract plugin, and PDF text is read locally; the extracted text is then sent to Anthropic for field extraction, like any other note.
 - **The MCP server** (`mcp/`, optional): a separate local, read-only process you run yourself; it makes no network calls.
 
+### What the catalog's scan reports
+
+The community catalog scans a plugin for what it is *capable* of, which is not the same as what it does with it. Everything it reports here is listed below, with where in the source to check it.
+
+| What the scan reports | What it is | Where |
+| --- | --- | --- |
+| **Shell execution** via `child_process` | One program: `yt-dlp`, which you install yourself and can point at explicitly in settings. It runs only when you capture a video or a social post. There is no shell in between, so nothing is ever parsed as a command line, and every argument is built by the `ytDlp*Args` functions, which refuse anything but an `http`/`https` link in the URL position. Without yt-dlp installed, nothing is ever started. | [`src/main.ts`](src/main.ts) `runYtDlp`, [`src/pipeline.ts`](src/pipeline.ts) `urlArg` |
+| **Vault enumeration** | Listing your notes, which is most of what this plugin is for: finding the people and commitments a meeting mentions, matching a recording to its note, indexing for Ask, and the file pickers. The list stays inside Obsidian. Note *contents* go to an AI provider only through the features described above, and only with a key you set. | [`src/main.ts`](src/main.ts), `getMarkdownFiles` call sites |
+| **Clipboard access** | **Writing:** a summary you asked to copy, the Microsoft device code at sign-in, the WhisperX install command, and a draft you generated. Each is a button or command you just chose. **Reading:** one button, labeled **From clipboard**, in the meeting-invite dialog. It puts what it read into the textarea next to it, so you can see exactly what was taken. Nothing reads the clipboard on its own, on a timer, or in the background. | [`src/main.ts`](src/main.ts) `copySummary`, `MeetingCaptureModal` |
+| **Filesystem access outside the vault** | Temporary files, all deleted in a `finally`: audio yt-dlp downloads before it is transcribed, subtitle files, and a YouTube cookie file that exists for the length of one download because it holds a live login. The one direct write *inside* the vault is the partial recording file, written through the filesystem rather than Obsidian so that a crash mid-meeting still leaves the audio. | [`src/main.ts`](src/main.ts) `transcribeMediaAudio`, `youtubeCookieArgs`, `openPartial` |
+
+There is no `eval`, no `Function` constructor, no `innerHTML`, and no code fetched and run at runtime. Every network call goes through Obsidian's own `requestUrl`; there is no raw `fetch` in the plugin.
+
 Paid third-party keys are optional end to end: self-host WhisperX for speaker-labeled transcription, point the AI model at your own Ollama (or LM Studio / llama.cpp) endpoint for extraction and chat, and use local Ollama embeddings for search, the whole pipeline then runs on machines you own. Device roles complete the picture: set a phone or laptop to *Record only* and a home machine to *Processor*, and recordings queue through your synced vault to be transcribed where the hardware is.
 
 ## The MCP bridge
