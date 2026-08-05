@@ -79,6 +79,9 @@ interface ElectronBits {
 		};
 		session?: { fromPartition(part: string): unknown };
 	};
+	/** Used to show a saved GIF in the file manager, where copying a file works
+	 *  the way the clipboard cannot. */
+	shell?: { showItemInFolder(path: string): void };
 }
 
 /** Mark the turns that carry no highlight, so Highlights-only can hide them.
@@ -183,6 +186,7 @@ const stripProgress = (md: string): string => md.replace(PC_PROGRESS_RE, "\n").r
 import { Packer } from "docx";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
+import { GIFEncoder, quantize, applyPalette } from "gifenc";
 import { buildMeetingDoc } from "./docx-export";
 import type { ResolvedImage } from "./docx-export";
 import {
@@ -312,10 +316,13 @@ import {
 	postMediaFileName,
 	recordingEmbeds,
 	postMediaRefs,
+	postMediaEmbeds,
 	EmbedRef,
 	parseEmbedSize,
 	withEmbedSize,
 	embedSrcMatches,
+	planGifFrames,
+	gifSize,
 	hasWordsToExtract,
 	postWords,
 	dayOf,
@@ -1380,6 +1387,24 @@ export default class PowerAssistantPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
+			id: "clip-to-gif", icon: "file-image",
+			name: "Copy this post's clip as an animated GIF",
+			// offered only where there is a clip: on any other note the answer is
+			// always "there is nothing here to convert"
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+				const editor = view?.editor;
+				if (!view?.file || !editor) return false;
+				// the cursor's line first, then the only clip in the note, so the
+				// command works without having to park the cursor on the picture
+				const only = postMediaEmbeds(editor.getValue()).filter((l) => VIDEO_EXTS.has((l.split(".").pop() ?? "").toLowerCase()));
+				const clip = this.clipOnLine(view, editor.getLine(editor.getCursor().line)) ?? (only.length === 1 ? this.clipOnLine(view, `![[${only[0]}]]`) : null);
+				if (!clip) return false;
+				if (!checking) void this.saveClipAsGif(clip, view.file.path);
+				return true;
+			},
+		});
+		this.addCommand({
 			id: "re-extract", icon: "refresh-cw",
 			name: "Re-extract this capture…",
 			checkCallback: (checking) => {
@@ -1697,6 +1722,18 @@ export default class PowerAssistantPlugin extends Plugin {
 				const cur = editor.getCursor();
 				if (md && stampSecsOnLine(editor.getLine(cur.line), cur.ch) != null && this.noteVideoFiles(md).length) {
 					menu.addItem((i) => i.setTitle("Grab a frame at this stamp").setIcon("image").onClick(() => void this.grabFrameAtStamp(md)));
+				}
+				// on the line the click landed on, so right-clicking the picture is
+				// what offers this rather than the palette being the only way in
+				const clip = md ? this.clipOnLine(md, editor.getLine(cur.line)) : null;
+				if (clip && md?.file) {
+					const notePath = md.file.path;
+					menu.addItem((i) =>
+						i
+							.setTitle("Copy as an animated GIF…")
+							.setIcon("file-image")
+							.onClick(() => void this.saveClipAsGif(clip, notePath))
+					);
 				}
 				const sel = editor.getSelection().trim();
 				if (!sel) return;
@@ -5481,6 +5518,85 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Watches the front note's post media; see `scanActiveAudio`. */
 	private mediaObs: MutationObserver | null = null;
 	private mediaObsTimer = 0;
+
+	/** The clip a line embeds, when it is one of the post's own and carries video.
+	 *
+	 *  Only the note's Media section counts: a recording embedded at the bottom
+	 *  of a meeting note is not a moving picture anybody wants to paste into a
+	 *  chat, and offering to spend a minute turning an hour of it into a GIF
+	 *  would be a menu item that exists to be regretted. */
+	private clipOnLine(view: MarkdownView, line: string): TFile | null {
+		if (!view.file) return null;
+		const embedded = /!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/.exec(line)?.[1];
+		if (!embedded) return null;
+		const media = postMediaEmbeds(view.editor?.getValue() ?? "");
+		if (!media.some((l) => l === embedded)) return null;
+		if (!VIDEO_EXTS.has((embedded.split(".").pop() ?? "").toLowerCase())) return null;
+		const f = this.app.metadataCache.getFirstLinkpathDest(embedded, view.file.path);
+		return f instanceof TFile ? f : null;
+	}
+
+	/** Turn a captured clip into an animated GIF, save it beside the note, and
+	 *  show it in the file manager ready to copy.
+	 *
+	 *  Revealed rather than copied because the clipboard cannot hold a moving
+	 *  picture: Chromium writes `image/png` and nothing else, so anything put
+	 *  there directly arrives as one frozen frame. A GIF FILE is what Teams and
+	 *  the web mail clients animate, and copying a file is something the file
+	 *  manager already does properly. One extra keystroke, and the thing that
+	 *  lands is the thing that was asked for. */
+	async saveClipAsGif(clip: TFile, notePath: string) {
+		const progress = new Notice("Power Assistant: reading the clip…", 0);
+		let canceled = false;
+		progress.messageEl.addClass("pa-notice-clickable");
+		progress.messageEl.addEventListener("click", () => {
+			canceled = true;
+			progress.setMessage("Power Assistant: stopping…");
+		});
+		let el: HTMLVideoElement | null = null;
+		try {
+			el = await openVideo(this.app.vault.getResourcePath(clip));
+			const bytes = await encodeVideoAsGif(el, (done, of) => {
+				progress.setMessage(`Power Assistant: building the GIF, frame ${done + 1} of ${of}…`);
+				return !canceled;
+			});
+			const dest = await this.app.fileManager.getAvailablePathForAttachment(`${clip.basename}.gif`, notePath);
+			const saved = await this.app.vault.createBinary(dest, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+			progress.hide();
+			const mb = bytes.byteLength / 1024 / 1024;
+			const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes.byteLength / 1024)} KB`;
+			// shown rather than announced: the next thing to do is copy it, and the
+			// file manager is where copying a file works
+			this.revealFile(saved);
+			new Notice(`Power Assistant: saved ${saved.name} (${size}). Copy it there, then paste it into Teams or an email.`, 12000);
+		} catch (e) {
+			progress.hide();
+			if (e instanceof GifCanceled) {
+				new Notice("Power Assistant: stopped; no GIF was written.", 6000);
+				return;
+			}
+			console.error("Power Assistant:", e);
+			new Notice("Power Assistant: could not build the GIF. " + (e instanceof Error ? e.message : String(e)), 12000);
+		} finally {
+			if (el) closeVideo(el);
+		}
+	}
+
+	/** Show a vault file in the system file manager. */
+	private revealFile(file: TFile) {
+		const shell = this.electron()?.shell;
+		const base = (this.app.vault.adapter as unknown as { basePath?: string }).basePath;
+		if (shell?.showItemInFolder && base) {
+			const abs = `${base}/${file.path}`;
+			// Explorer wants a native path; a drive letter is what says we are on
+			// the platform that cares. Everywhere else forward slashes are the path.
+			shell.showItemInFolder(/^[a-zA-Z]:/.test(base) ? abs.replace(/\//g, "\\") : abs);
+			return;
+		}
+		// no Electron (or an adapter with no path on disk): the note still has the
+		// file, so say where rather than failing at the last step
+		new Notice(`Power Assistant: the GIF is at ${file.path}.`, 12000);
+	}
 
 	/** Write a dragged width into the note, or clear it with a width of 0.
 	 *
@@ -10077,6 +10193,61 @@ async function seekVideo(el: HTMLVideoElement, secs: number): Promise<void> {
 	// disagrees, wait for it to say so rather than drawing a blank
 	if (el.readyState < 2) await mediaEvent(el, "loadeddata", 10_000).catch(() => {});
 }
+
+/** How a captured clip is turned into a GIF. Not settings: a post's clip is a
+ *  few seconds of meme, and the numbers that suit one suit all of them.
+ *
+ *  Chosen by measuring the same ten-second clip, because a GIF stores every
+ *  frame whole and the cost is not obvious from the outside: 480px at 12 a
+ *  second in full colour came to 13 MB, which is not a thing to paste into a
+ *  chat window. 360px at 10 a second in 128 colours is 5.6 MB of the same clip
+ *  and takes about three seconds to build, while still being legible at the
+ *  size a chat shows it. The frame budget is what stops a long clip producing
+ *  a file nothing will accept; past it the rate drops and the clip stays
+ *  whole. */
+const GIF_MAX_WIDTH = 360;
+const GIF_FPS = 10;
+const GIF_MAX_FRAMES = 120;
+const GIF_COLORS = 128;
+
+/** Encode an open video into an animated GIF.
+ *
+ *  Frame by frame through a canvas, because there is no encoder on the machine
+ *  to hand the file to: the decoding half is what the screens scan already
+ *  does, and this adds the palette and the writing. Each frame gets its own
+ *  palette rather than sharing one across the clip — a shared palette is
+ *  smaller and visibly worse on exactly the thing being copied, which is a
+ *  picture with hard-edged caption text over moving video. */
+async function encodeVideoAsGif(el: HTMLVideoElement, onProgress: (done: number, of: number) => boolean): Promise<Uint8Array> {
+	const { times, delayMs } = planGifFrames(el.duration, GIF_FPS, GIF_MAX_FRAMES);
+	if (!times.length) throw new Error("that clip reports no length, so it cannot be measured into frames.");
+	const { width, height } = gifSize(el.videoWidth, el.videoHeight, GIF_MAX_WIDTH);
+	const canvas = createEl("canvas");
+	canvas.width = width;
+	canvas.height = height;
+	// willReadFrequently: every frame is read straight back out, which is the
+	// case this hint exists for
+	const ctx = canvas.getContext("2d", { willReadFrequently: true });
+	if (!ctx) throw new Error("this device could not open a canvas to draw the frames.");
+	const gif = GIFEncoder();
+	for (const [i, at] of times.entries()) {
+		if (!onProgress(i, times.length)) throw new GifCanceled();
+		await seekVideo(el, at);
+		ctx.drawImage(el, 0, 0, width, height);
+		const { data } = ctx.getImageData(0, 0, width, height);
+		const palette = quantize(data, GIF_COLORS);
+		// `repeat: 0` belongs to the FIRST frame, and is what writes the loop
+		// extension; without it the GIF plays once and stops, which of a meme is
+		// the wrong half of the behaviour
+		gif.writeFrame(applyPalette(data, palette), width, height, i === 0 ? { palette, delay: delayMs, repeat: 0 } : { palette, delay: delayMs });
+	}
+	gif.finish();
+	return gif.bytes();
+}
+
+/** Thrown when the reader stops the encode; carries no message because the
+ *  caller says "stopped" rather than reporting it as a failure. */
+class GifCanceled extends Error {}
 
 /** The frame currently displayed, as webp bytes, scaled to `maxWidth`. */
 async function frameBytes(el: HTMLVideoElement, maxWidth: number): Promise<{ bytes: Uint8Array; mime: string }> {
