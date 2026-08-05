@@ -308,7 +308,16 @@ import {
 	parseTweetEmbed,
 	TweetEmbed,
 	TweetRead,
+	PostMedia,
+	postMediaFileName,
+	recordingEmbeds,
+	postMediaRefs,
+	EmbedRef,
+	parseEmbedSize,
+	withEmbedSize,
+	embedSrcMatches,
 	hasWordsToExtract,
+	postWords,
 	dayOf,
 	today,
 	daysAgo,
@@ -688,6 +697,20 @@ interface PowerAssistantSettings {
 	mediaFilename: string;
 	/** Which sections they extract (content-oriented by default). */
 	mediaExtractions: Record<ExtractionKey, boolean>;
+	/** Save a post's pictures, GIFs and videos into the vault and embed them.
+	 *  A post is frequently nothing but its picture, and the alternative to
+	 *  keeping a copy is a note that describes something it cannot show. */
+	savePostMedia: boolean;
+	/** The size a single item may reach before it is left behind, in MB. A video
+	 *  over the limit keeps its poster frame instead, so the note still has a
+	 *  picture in it; there is nothing to fall back to for a photo that big, and
+	 *  there are no photos that big. */
+	postMediaMaxMb: number;
+	/** How tall a post's picture may render in the note, in pixels. 0 removes the
+	 *  cap. Height rather than width, because a post's media comes in every shape
+	 *  and only a height keeps a portrait clip and a landscape one both to a size
+	 *  that reads as part of the note instead of taking the whole page. */
+	postMediaMaxHeight: number;
 	/** Where web page captures are written; supports {{site}}. */
 	webFolder: string;
 	/** Filename pattern for web captures; supports {{title}}, {{date}}, {{site}}. */
@@ -841,6 +864,13 @@ const DEFAULT_SETTINGS: PowerAssistantSettings = {
 	mediaFolder: "Sources/Social/{{site}}",
 	mediaFilename: "{{date}} {{title}}",
 	mediaExtractions: { summary: true, takeaways: true, facts: true, resources: true, quotes: true, questions: true, keywords: true, actions: false, decisions: false, risks: false },
+	savePostMedia: true,
+	// generous enough for a phone clip, short of the size where a vault starts
+	// paying for a capture in sync time
+	postMediaMaxMb: 25,
+	// big enough to read a meme's caption at a glance, small enough that the note
+	// around it is still a note rather than a caption under a poster
+	postMediaMaxHeight: 360,
 	webFolder: "Sources/Articles",
 	webFilename: "{{date}} {{title}}",
 	webExtractions: { summary: true, takeaways: true, facts: true, resources: true, quotes: true, questions: true, keywords: true, actions: false, decisions: false, risks: false },
@@ -1531,10 +1561,29 @@ export default class PowerAssistantPlugin extends Plugin {
 		// post-processor does not run over the Live Preview editor DOM)
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scanActiveAudio()));
 		this.registerEvent(this.app.workspace.on("layout-change", () => this.scanActiveAudio()));
+		// opening another note in the SAME pane need not change the active leaf, and
+		// a captured post's clip has to start playing when the note is opened, not
+		// only when the pane it is in was switched to
+		this.registerEvent(this.app.workspace.on("file-open", () => this.scanActiveAudio()));
 		this.app.workspace.onLayoutReady(() => this.scanActiveAudio());
 		this.register(() => {
 			this.player?.destroy();
 			this.player = null;
+			this.mediaObs?.disconnect();
+			this.mediaObs = null;
+			window.clearTimeout(this.mediaObsTimer);
+			// disabling the plugin must not leave a clip of its playing: nothing
+			// would be left to reach it
+			for (const el of armedClips) {
+				try {
+					el.pause();
+					el.muted = true;
+					el.loop = false;
+				} catch {
+					/* already torn down */
+				}
+			}
+			armedClips.clear();
 		});
 		this.addCommand({
 			id: "rebuild-index", icon: "refresh-cw",
@@ -5380,20 +5429,79 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  where the reading-view post-processor never runs. Idempotent per audio
 	 *  element, so the brief observer that catches a late-loading embed is safe. */
 	scanActiveAudio() {
+		// runs whatever happens next: leaving a note behind is exactly when its
+		// clips get dropped from the document
+		stopOrphanedClips();
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 		if (!view) {
 			this.refreshPlayer();
 			return;
 		}
 		const root = view.containerEl;
-		fixAudioDurations(root);
-		this.refreshPlayer();
-		const obs = new MutationObserver(() => {
+		// one watcher at a time: this runs on every leaf change, and observers left
+		// behind would each keep re-scanning a view nobody is looking at
+		this.mediaObs?.disconnect();
+		this.mediaObs = null;
+		window.clearTimeout(this.mediaObsTimer);
+		const posted = postMediaRefs(view.editor?.getValue() ?? "");
+		// the post's clips are armed first so the duration probe knows to leave them
+		// alone, and because an embed that has only just rendered should start
+		// playing in the same pass that found it
+		const pass = () => {
+			// before anything can add to the pile: a clip the editor dropped
+			// mid-render can only be reached from the list
+			stopOrphanedClips();
+			// re-read the sizes each pass: a drag rewrites the link, and the embed
+			// that comes back has to be dressed from what the note now says
+			const refs = postMediaRefs(view.editor?.getValue() ?? "");
+			showPostMedia(root, refs, this.settings.postMediaMaxHeight, (link, width) => this.setPostMediaWidth(view, link, width));
 			fixAudioDurations(root);
 			this.refreshPlayer();
+		};
+		pass();
+		// coalesced, because a persistent watcher on a note being typed into would
+		// otherwise re-scan on every keystroke's worth of DOM churn
+		const obs = new MutationObserver(() => {
+			window.clearTimeout(this.mediaObsTimer);
+			this.mediaObsTimer = window.setTimeout(pass, 50);
 		});
 		obs.observe(root, { childList: true, subtree: true });
-		window.setTimeout(() => obs.disconnect(), 6000); // embeds load fast; never watch forever
+		if (!posted.length) {
+			// nothing here but recordings: the embeds load fast and there is no handle
+			// to keep alive, so this goes back to a brief look and stops
+			window.setTimeout(() => obs.disconnect(), 6000);
+			return;
+		}
+		// a post's picture keeps its watcher for as long as the note is in front.
+		// Every edit re-renders the embed and takes the resize handle with it, and a
+		// handle that only came back when the note was reopened would look broken.
+		this.mediaObs = obs;
+	}
+
+	/** Watches the front note's post media; see `scanActiveAudio`. */
+	private mediaObs: MutationObserver | null = null;
+	private mediaObsTimer = 0;
+
+	/** Write a dragged width into the note, or clear it with a width of 0.
+	 *
+	 *  Through the editor rather than the vault, and as a single-line replacement,
+	 *  so the note keeps its scroll position and its folds: rewriting the whole
+	 *  file reloads the open view, and a resize that jumped the note back to the
+	 *  top would cost more than it gave. `withEmbedSize` never changes the line
+	 *  count, which is what makes the one-line swap safe. */
+	private setPostMediaWidth(view: MarkdownView, link: string, width: number) {
+		const editor = view.editor;
+		if (!editor) return;
+		const before = editor.getValue();
+		const after = withEmbedSize(before, link, width);
+		if (after === before) return;
+		const was = before.split("\n");
+		const now = after.split("\n");
+		for (let i = 0; i < was.length; i++) {
+			if (was[i] === now[i]) continue;
+			editor.replaceRange(now[i], { line: i, ch: 0 }, { line: i, ch: was[i].length });
+			return;
+		}
 	}
 
 	private player: TranscriptPlayer | null = null;
@@ -5402,9 +5510,11 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  regardless of whether that embed has rendered yet. */
 	private noteAudioFile(view: MarkdownView): TFile | null {
 		if (!view.file) return null;
-		const m = /!\[\[([^\]|]+\.(?:webm|m4a|mp3|wav|ogg|flac|mp4))(?:\|[^\]]*)?\]\]/i.exec(view.editor?.getValue() ?? "");
-		if (!m) return null;
-		const f = this.app.metadataCache.getFirstLinkpathDest(m[1], view.file.path);
+		// a post's own GIF or video is not this note's recording, so it never gets
+		// the player: the bar would hide the picture and scrub through silence
+		const link = recordingEmbeds(view.editor?.getValue() ?? "").find((l) => AUDIO_EXTS.has((l.split(".").pop() ?? "").toLowerCase()));
+		if (!link) return null;
+		const f = this.app.metadataCache.getFirstLinkpathDest(link, view.file.path);
 		return f instanceof TFile ? f : null;
 	}
 
@@ -5416,11 +5526,11 @@ export default class PowerAssistantPlugin extends Plugin {
 	private noteVideoFiles(view: MarkdownView): TFile[] {
 		if (!view.file) return [];
 		const out: TFile[] = [];
-		const re = /!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(view.editor?.getValue() ?? ""))) {
-			if (!VIDEO_EXTS.has((m[1].split(".").pop() ?? "").toLowerCase())) continue;
-			const f = this.app.metadataCache.getFirstLinkpathDest(m[1], view.file.path);
+		// the post's own media is skipped for the same reason the player skips it:
+		// a captured GIF has no stamps to grab a frame at
+		for (const link of recordingEmbeds(view.editor?.getValue() ?? "")) {
+			if (!VIDEO_EXTS.has((link.split(".").pop() ?? "").toLowerCase())) continue;
+			const f = this.app.metadataCache.getFirstLinkpathDest(link, view.file.path);
 			if (f instanceof TFile) out.push(f);
 		}
 		return out;
@@ -7416,6 +7526,65 @@ export default class PowerAssistantPlugin extends Plugin {
 		}
 	}
 
+	/** Save a post's pictures into the vault and return them as embed lines.
+	 *
+	 *  Kept as files rather than linked back to X, because a hotlinked picture is
+	 *  a note that empties itself: the post is deleted, the account goes private,
+	 *  the CDN expires the address, and what is left in the vault is a broken
+	 *  image where the captured thing used to be. The copy also works offline and
+	 *  on the phone, which a note in a synced vault has to.
+	 *
+	 *  Nothing here can fail the capture. A picture that will not download costs
+	 *  the note its picture, not its text, so every item is tried on its own and a
+	 *  failure is logged and passed over. */
+	private async downloadPostMedia(list: PostMedia[], noteBase: string, notePath: string): Promise<string[]> {
+		const cap = Math.max(1, this.settings.postMediaMaxMb) * 1024 * 1024;
+		const links: string[] = [];
+		let skipped = 0;
+		for (const [i, item] of list.entries()) {
+			// a video over the limit still leaves a picture in the note: its poster
+			// is a worse record of the post, and far better than none
+			for (const url of [item.url, item.poster].filter((u): u is string => !!u)) {
+				try {
+					const res = await requestUrl({ url, headers: { "User-Agent": WEB_UA }, throw: false });
+					if (res.status >= 400) continue;
+					const bytes = res.arrayBuffer;
+					if (bytes.byteLength > cap) {
+						console.warn(`Power Assistant: ${url} is ${Math.round(bytes.byteLength / 1024 / 1024)} MB, over the ${this.settings.postMediaMaxMb} MB limit for a post's media.`);
+						continue;
+					}
+					const dest = await this.app.fileManager.getAvailablePathForAttachment(postMediaFileName(noteBase, url, i, list.length), notePath);
+					const saved = await this.app.vault.createBinary(dest, bytes);
+					links.push(`![[${saved.path}]]`);
+					break;
+				} catch (e) {
+					console.warn("Power Assistant: could not save a post's media.", url, e);
+				}
+			}
+			if (links.length <= i) skipped++;
+		}
+		// the picture IS the post here, so losing one silently would leave a note
+		// that reads as if the post never had it
+		if (skipped) new Notice(`Power Assistant: ${skipped} of this post's ${list.length} media item(s) could not be saved; the rest of the capture is intact.`, 9000);
+		return links;
+	}
+
+	/** What a post holds up to look at, whichever route read the post.
+	 *
+	 *  X is asked directly, because its embed payload names the real photos and
+	 *  tells a GIF from a video, and because the yt-dlp route never calls that
+	 *  endpoint at all. Every other site falls back to the still yt-dlp reports,
+	 *  which it does for all ~1750 of its extractors, so a TikTok or a Reddit
+	 *  capture gets a picture without a reader of its own. */
+	private async readPostMedia(url: string, dump: MediaDump | null): Promise<{ media: PostMedia[]; read: TweetRead | null }> {
+		let read: TweetRead | null = null;
+		if (isXUrl(url)) read = await this.readTweetText(url);
+		const media = this.settings.savePostMedia ? (read?.media ?? []) : [];
+		if (media.length) return { media, read };
+		const thumb = this.settings.savePostMedia ? (dump?.thumbnail ?? "").trim() : "";
+		return { media: thumb ? [{ kind: "photo", url: thumb }] : [], read };
+	}
+
 	/** A video's title and caption text, read by yt-dlp rather than by asking
 	 *  YouTube directly.
 	 *
@@ -7564,15 +7733,21 @@ export default class PowerAssistantPlugin extends Plugin {
 		heading?: string;
 		/** The captured text IS the content, so it leads the note. */
 		leadWithText?: boolean;
+		/** The post's saved pictures, as embed lines. */
+		media?: string;
 	}) {
 		const s = this.settings;
 		const text = s.corrections.length ? applyCorrections(o.text, s.corrections) : o.text;
 		let body: string | null = null;
 		let extractionError: string | null = null;
+		// a post that is only a picture has nothing to summarize, and a note saying
+		// "configure an API key" over one whose key is fine sends its reader off to
+		// fix something that is not broken
+		const nothingToExtract = !hasWordsToExtract(text);
 		// nothing to extract from is not an extraction failure: the captured text is
 		// the whole note. Asking anyway spends a call to be told, in the note's own
 		// Summary, that a URL cannot be summarized
-		if (this.llmReady() && hasWordsToExtract(text)) {
+		if (this.llmReady() && !nothingToExtract) {
 			new Notice("Power Assistant: extracting notes…");
 			// never lose good text: if extraction fails, still write the note with the
 			// text and the error, like the meeting flow does
@@ -7597,6 +7772,8 @@ export default class PowerAssistantPlugin extends Plugin {
 			props: o.props,
 			transcriptHeading: o.heading,
 			leadWithText: o.leadWithText,
+			media: o.media,
+			nothingToExtract,
 			filename: o.notePath,
 		});
 		await this.writeNote(o.notePath, o.folder, note);
@@ -7699,11 +7876,22 @@ export default class PowerAssistantPlugin extends Plugin {
 			// the speech is missing because the program that fetches it is not here
 			let ytDlpAbsent = false;
 			let postHasVideo = false;
+			// what the post holds up to look at. Frequently the whole content: a
+			// meme, a chart, a clip. Read here and downloaded further down, once the
+			// note it belongs beside is known to be one worth writing
+			let media: PostMedia[] = [];
 			try {
 				const out = await this.runYtDlp(ytDlpInfoArgs(url, s.cookieBrowser, s.cookieFile), 90_000);
 				const dump = JSON.parse(out.trim().split("\n")[0] || "{}") as MediaDump;
 				info = parseMediaInfo(dump, site?.label);
 				postText = (dump.description ?? "").trim();
+				const post = await this.readPostMedia(url, dump);
+				media = post.media;
+				// X's own read of the post beats yt-dlp's description of it: it names
+				// the t.co links X appended for the post's own media, so they come out
+				// instead of trailing the words, and it carries the quoted or
+				// replied-to post that a quote-post's words depend on
+				if (post.read) postText = post.read.text;
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				// A missing yt-dlp costs the audio, not the post. Most posts are words,
@@ -7730,6 +7918,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				info = read.info;
 				postText = read.text;
 				postHasVideo = read.hasVideo === true;
+				if (s.savePostMedia) media = read.media ?? [];
 			}
 
 			// only matters when there is audio: a text post costs no transcription
@@ -7745,7 +7934,9 @@ export default class PowerAssistantPlugin extends Plugin {
 			// this same post captures fine, because the words are in the audio. Asked
 			// before the folder and the note path, which are answers to a question that
 			// no longer arises.
-			if (!hasAudio && !postText.trim()) {
+			// with the pictures saved, a wordless post is no longer nothing to file:
+			// the media IS what it said, and the note is worth writing for it alone
+			if (!hasAudio && !postWords(postText) && !media.length) {
 				new Notice(
 					!ytDlpAbsent
 						? "Power Assistant: that post has no video and no words of its own, so there is nothing to capture."
@@ -7782,16 +7973,26 @@ export default class PowerAssistantPlugin extends Plugin {
 					new Notice("Power Assistant: no speech in that video, so the post's own text was saved instead.", 10000);
 				}
 			}
+			// X appends a t.co link to the text of every post carrying media, so a
+			// wordless post arrives as a one-line post whose line is that link.
+			// Saved as the post's words it puts a bare shortener where the content
+			// should be, which is what a wordless capture used to file.
+			if (!postWords(text)) text = "";
 			// the wordless case was settled above; this one is a video that turned out
 			// to have no speech in it either, which is only knowable after transcribing
-			if (!text.trim()) {
+			if (!text && !media.length) {
 				new Notice("Power Assistant: that post has no speech and no text, so there is nothing to capture.", 10000);
 				return;
 			}
+			// the note's own name, so the attachments sort beside it in a folder that
+			// holds the media of many captures
+			const noteBase = (notePath.split("/").pop() ?? "").replace(/\.md$/i, "");
+			const mediaLinks = media.length ? await this.downloadPostMedia(media, noteBase, notePath) : [];
 			await this.writeCapture({
 				url,
 				title: info.title,
 				text,
+				media: mediaLinks.join("\n\n"),
 				folder,
 				notePath,
 				// a video gets the full set; two sentences of text get the three
@@ -10010,8 +10211,284 @@ async function pngForDocx(url: string): Promise<ResolvedImage> {
  *  so the audio player shows no total time (just a 0:00 that never fills in).
  *  Force the browser to resolve the real duration by seeking to the end once,
  *  then rewind, after which the native control shows the total length. */
+/** Longest clip that plays on its own. Past this a post is carrying a video to
+ *  be watched rather than a moving picture to be glanced at, and starting it on
+ *  every note open would be a nuisance instead of a likeness of the post. */
+const GIF_AUTOPLAY_MAX_SECS = 60;
+
+/** Size a captured post's pictures, and make its clips behave the way they did
+ *  on the site: playing on open, looping, and silent.
+ *
+ *  X serves an uploaded GIF as an MP4, and calls most short meme clips videos
+ *  too, so embedding one the ordinary way puts a still with a play button where
+ *  the post had something moving. Muted because that is what autoplay is
+ *  allowed to be, and what the site does; the controls stay, so a clip can be
+ *  paused or unmuted. */
+/** Narrowest a picture can be dragged to. Past this the handle is harder to
+ *  grab than the picture is to see, and a stray drag would lose it entirely. */
+const POST_MEDIA_MIN_W = 80;
+
+/** Silence a captured clip, and keep it silent through a re-render.
+ *
+ *  `defaultMuted` rather than `muted` is the whole point: `muted` is a property
+ *  and nothing else, while `defaultMuted` reflects the `muted` content
+ *  attribute, so it survives the element being cloned the way `loop` and
+ *  `autoplay` do. Setting only the property left a re-rendered clone playing
+ *  and audible.
+ *
+ *  A clip the reader unmuted themselves is left alone: silent by default is not
+ *  the same as silent no matter what they ask for. */
+function mutePostClip(el: HTMLVideoElement) {
+	// keyed on the element itself, not on a data attribute: a clone carries the
+	// attributes across and would inherit a decision made about the element it
+	// was copied from
+	armedClips.add(el);
+	if (!volumeWatched.has(el)) {
+		volumeWatched.add(el);
+		el.addEventListener("volumechange", () => {
+			// Only a change the reader actually made counts. Obsidian restores a
+			// remembered volume onto a media embed by itself, and reading that as
+			// "they asked for sound" turns muting off for the rest of the session,
+			// which is a note that plays out loud and cannot be talked out of it.
+			const byReader = navigator.userActivation?.isActive === true;
+			if (el.muted || !byReader) unmutedByReader.delete(el);
+			else unmutedByReader.add(el);
+		});
+	}
+	if (unmutedByReader.has(el)) return;
+	if (!el.muted) el.muted = true;
+	if (!el.defaultMuted) el.defaultMuted = true;
+}
+
+/** Clips already wired for the check below, so a pass does not stack listeners. */
+const volumeWatched = new WeakSet<HTMLVideoElement>();
+/** Clips the reader unmuted on purpose, which no later pass may re-silence. */
+const unmutedByReader = new WeakSet<HTMLVideoElement>();
+
+/** Every clip this plugin has armed, held by reference rather than weakly, so
+ *  one that leaves the document can still be reached.
+ *
+ *  Belt and braces rather than a fix for a known fault: Chromium was measured
+ *  pausing a `<video>` the moment it is removed from the document, so a clip
+ *  stranded by a re-render should fall silent on its own. The instinct that it
+ *  would keep playing is true of a `new Audio()` that was never in a document,
+ *  and this is not that. Kept because a clip nothing can reach is the one bug
+ *  in here with no way back short of restarting the app, and the cost of being
+ *  sure is a set and a loop. */
+const armedClips = new Set<HTMLVideoElement>();
+
+/** Silence and release every clip that is no longer in the document. */
+function stopOrphanedClips() {
+	for (const el of armedClips) {
+		if (el.isConnected) continue;
+		armedClips.delete(el);
+		try {
+			el.pause();
+			el.muted = true;
+			el.loop = false;
+			el.removeAttribute("autoplay");
+			// drop the media resource itself, so nothing can start it again
+			el.removeAttribute("src");
+			el.load();
+		} catch {
+			/* already torn down by the browser */
+		}
+	}
+}
+
+/** Write a style only when it would change: every attribute this plugin touches
+ *  inside the editor's own DOM is a change CodeMirror may decide to repair by
+ *  re-rendering the block, and a re-render is what strands a playing clip. */
+function setStyle(el: HTMLElement, prop: string, value: string) {
+	if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value);
+}
+
+/** A corner to drag, for the embeds Obsidian does not give one to.
+ *
+ *  Obsidian resizes an image embed by dragging and writes the result into the
+ *  link as `|400`; it does nothing of the kind for a video, which is what a
+ *  captured post's clip is. This puts the same handle on both and writes the
+ *  same notation, so a size dragged here means what it would mean anywhere else
+ *  in the vault, and a note carrying one is still an ordinary note.
+ *
+ *  Pressing twice in quick succession clears the size and hands the picture back
+ *  to the height in settings, which is the only way back once a drag has
+ *  written a width. */
+function mountResizeHandle(embed: HTMLElement, link: string, onResize: (link: string, width: number) => void) {
+	const existing = embed.querySelector<HTMLElement>(".pa-resize-handle");
+	if (existing) {
+		// re-stamped rather than left as it was built: Live Preview re-renders an
+		// embed on every edit, and a handle still carrying the link it was created
+		// for would save a width against whatever used to be here. Only when it
+		// actually differs, because every write here is one the editor may answer
+		// by re-rendering the block.
+		if (existing.dataset.link !== link) existing.dataset.link = link;
+		return;
+	}
+	const handle = embed.createDiv({ cls: "pa-resize-handle" });
+	// no aria-label: Obsidian renders one as its own tooltip, which sits over the
+	// corner being dragged
+	handle.title = "Drag to resize, press twice to reset";
+	handle.dataset.link = link;
+	let startX = 0;
+	let startW = 0;
+	/** The width this drag asked for, which is not the same as the width the
+	 *  element happens to measure: a re-render can leave it at a size nobody
+	 *  chose, and saving that would write the wrong number into the note. */
+	let asked = 0;
+	let dragging = false;
+	let lastPress = 0;
+	// re-found on every event instead of captured once, because the element a
+	// drag started on can be replaced under it by a re-render, and sizing a
+	// detached node is a drag that does nothing
+	const mediaNow = () => embed.querySelector<HTMLElement>("video, img");
+	const move = (e: PointerEvent) => {
+		const media = mediaNow();
+		if (!dragging || !media) return;
+		asked = Math.max(POST_MEDIA_MIN_W, Math.round(startW + (e.clientX - startX)));
+		media.style.width = `${asked}px`;
+		// the width is now in charge; the height cap would otherwise fight it
+		media.style.maxHeight = "none";
+		media.style.height = "auto";
+		// a real drag is never the first half of a double-press
+		if (Math.abs(e.clientX - startX) > 3) lastPress = 0;
+		e.preventDefault();
+	};
+	const end = (e: PointerEvent) => {
+		if (!dragging) return;
+		dragging = false;
+		resizing = null;
+		try {
+			handle.releasePointerCapture(e.pointerId);
+		} catch {
+			/* the capture is already gone if the pointer left the window */
+		}
+		window.removeEventListener("pointermove", move);
+		window.removeEventListener("pointerup", end);
+		window.removeEventListener("pointercancel", end);
+		// a press that never moved is not a resize, and must not write one
+		if (asked > 0) onResize(handle.dataset.link ?? "", asked);
+	};
+	handle.addEventListener("pointerdown", (e) => {
+		const media = mediaNow();
+		if (!media) return;
+		// a drag on the handle is not a place to put the cursor: without this the
+		// editor takes it as a click into the note and un-renders the embed
+		e.preventDefault();
+		e.stopPropagation();
+		// `dblclick` cannot carry the reset: cancelling pointerdown suppresses the
+		// mouse events a double-click is assembled from, so it may never arrive.
+		// Two presses close together, with no drag between them, is the same
+		// gesture and does not depend on that.
+		if (e.timeStamp - lastPress < 400) {
+			lastPress = 0;
+			onResize(handle.dataset.link ?? "", 0);
+			return;
+		}
+		lastPress = e.timeStamp;
+		dragging = true;
+		startX = e.clientX;
+		startW = media.getBoundingClientRect().width;
+		asked = 0;
+		resizing = media;
+		try {
+			handle.setPointerCapture(e.pointerId);
+		} catch {
+			/* capture is a nicety; the window listeners carry the drag regardless */
+		}
+		window.addEventListener("pointermove", move);
+		window.addEventListener("pointerup", end);
+		window.addEventListener("pointercancel", end);
+	});
+	// cancelling pointerdown is SUPPOSED to suppress these, and the editor
+	// un-rendering the embed mid-drag is too expensive to leave to a "supposed to"
+	for (const kind of ["mousedown", "click", "dblclick"]) {
+		handle.addEventListener(kind, (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+		});
+	}
+}
+
+/** The picture a drag currently owns, if any. While it is set, a re-render must
+ *  not restyle it: re-applying the note's size mid-drag snaps the picture back
+ *  from under the pointer, and whatever it lands on gets saved. */
+let resizing: HTMLElement | null = null;
+
+function showPostMedia(root: HTMLElement, refs: EmbedRef[], maxHeight: number, onResize: (link: string, width: number) => void) {
+	if (!refs.length) return;
+	// `.internal-embed` rather than `.media-embed`: a photo renders as an
+	// image-embed, and it needs the same class, the same cap, and the same handle
+	for (const embed of Array.from(root.querySelectorAll<HTMLElement>(".internal-embed"))) {
+		const src = embed.getAttribute("src") ?? "";
+		const ref = refs.find((r) => embedSrcMatches(r.link, src));
+		if (!ref) continue;
+		// marks the embed for the stylesheet: it carries the size cap, and the rule
+		// that hides a recording's native player behind the sticky bar must never
+		// take the post's picture
+		embed.addClass("pa-post-media");
+		setStyle(embed, "--pa-post-media-h", maxHeight > 0 ? `${maxHeight}px` : "none");
+		// set inline, not left to the stylesheet: the handle is positioned against
+		// this box, so if a more specific core rule wins `display` the box stops
+		// wrapping the picture and the handle lands somewhere off in the note
+		// instead of on its corner. An inline style cannot lose that argument.
+		setStyle(embed, "position", "relative");
+		setStyle(embed, "display", "inline-block");
+		setStyle(embed, "line-height", "0");
+		const media = embed.querySelector<HTMLElement>("video, img");
+		if (media) {
+			// a drag owns the size while it lasts; the note gets the last word after
+			if (media !== resizing) {
+				// a width dragged onto this embed outranks the height in settings: it is
+				// the more specific answer, and the one this note was given on purpose
+				const size = parseEmbedSize(ref.size);
+				if (size) {
+					setStyle(media, "width", `${size.width}px`);
+					setStyle(media, "max-height", "none");
+					setStyle(media, "height", size.height ? `${size.height}px` : "auto");
+				} else if (media.style.width || media.style.height || media.style.maxHeight) {
+					media.style.removeProperty("width");
+					media.style.removeProperty("height");
+					media.style.removeProperty("max-height");
+				}
+			}
+			mountResizeHandle(embed, ref.link, onResize);
+		}
+		const el = embed.querySelector("video");
+		if (!el) continue;
+		// Re-asserted on every pass rather than set once when the clip was armed.
+		// `loop` and `autoplay` are content attributes and survive the editor
+		// cloning the element to re-render it; `muted` is a property and does not.
+		// A clone therefore came back still autoplaying, still looping, and
+		// audible — which is a note that makes noise on its own.
+		mutePostClip(el);
+		if (el.dataset.paGif) continue;
+		el.dataset.paGif = "1";
+		const arm = () => {
+			if (Number.isFinite(el.duration) && el.duration > GIF_AUTOPLAY_MAX_SECS) return;
+			el.loop = true;
+			el.setAttribute("playsinline", "");
+			// `autoplay` rather than a bare play() call, because Chromium pauses
+			// muted video-only media that is off screen to save power, and a play()
+			// issued while the note is still rendering is refused for exactly that
+			// reason ("video-only background media was paused"). The attribute hands
+			// the decision to the browser, which starts the clip when it is actually
+			// visible and stops it when it is scrolled away — which is what a moving
+			// picture in a note should do anyway.
+			el.autoplay = true;
+			// and a nudge for the case where it is already on screen and loaded; a
+			// refusal here is the ordinary off-screen one and costs nothing
+			void el.play().catch(() => undefined);
+		};
+		if (el.readyState >= 1) arm();
+		else el.addEventListener("loadedmetadata", arm, { once: true });
+	}
+}
+
 function fixAudioDuration(el: HTMLMediaElement) {
-	if (el.dataset.paDurfix) return;
+	// a post's clip is already playing and already knows its length; seeking past
+	// its end to measure it would fight the playback just started
+	if (el.dataset.paDurfix || el.dataset.paGif) return;
 	el.dataset.paDurfix = "1";
 	const known = () => Number.isFinite(el.duration) && el.duration > 0;
 	const probe = () => {
@@ -14394,6 +14871,46 @@ class AssistantSettingTab extends PluginSettingTab {
 						help: "The name pattern for a captured video or post. {{title}} is the post's own text trimmed to fit a filename, {{date}} is today, and {{site}} is the source. Add an extension or it defaults to .md.",
 						build: (st) => {
 							st.addText((t) => t.setPlaceholder("{{date}} {{title}}").setValue(s.mediaFilename).onChange((v) => ((s.mediaFilename = v || "{{date}} {{title}}"), save())));
+						},
+					},
+					{
+						name: "Save the post's pictures",
+						desc: "Download a post's photos, GIFs and video into the vault and show them at the top of the note. Off keeps only the words.",
+						help: "Most posts worth keeping are a picture, a chart, or a clip, and a note that kept only the words around one has kept the packaging. This saves a copy into your attachments folder and embeds it under a Media heading above everything else. A copy rather than a link, because posts get deleted, accounts go private, and addresses expire, and a linked picture leaves a broken image where the captured thing used to be. The copy also works offline and on your phone.",
+						build: (st) => {
+							st.addToggle((t) => t.setValue(s.savePostMedia).onChange((v) => ((s.savePostMedia = v), save())));
+						},
+					},
+					{
+						name: "Largest item to save",
+						desc: "Megabytes. Anything bigger is left where it is; a video over the limit keeps its poster frame instead, so the note still has a picture in it.",
+						help: "A ceiling on each picture or clip saved from a post, so one long video cannot quietly add hundreds of megabytes to a synced vault. A video over the limit falls back to the still shown before it plays, which is a poorer record of the post and far better than none. 25 MB fits a phone clip comfortably.",
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("25")
+									.setValue(String(s.postMediaMaxMb))
+									.onChange((v) => {
+										const n = Number(v);
+										if (Number.isFinite(n) && n >= 1) ((s.postMediaMaxMb = Math.round(n)), save());
+									})
+							);
+						},
+					},
+					{
+						name: "Picture height in the note",
+						desc: "Pixels. The default height for a captured post's picture or clip. Drag a picture's corner to size that one on its own. 0 removes the cap.",
+						help: "The starting size for every captured picture, capped by height rather than width because posts come in every shape and only a height keeps a tall clip and a wide one both readable. To size one picture on its own, hover it and drag the corner: that writes a width into the note the same way Obsidian's own image handles do, and a width set that way beats this setting. Double-click the corner to clear it and come back here. The file is never touched, only how big it draws, so changing this re-sizes every capture you have not dragged, immediately. 0 removes the cap and pictures draw at their own size, up to the width of the note.",
+						build: (st) => {
+							st.addText((t) =>
+								t
+									.setPlaceholder("360")
+									.setValue(String(s.postMediaMaxHeight))
+									.onChange((v) => {
+										const n = Number(v);
+										if (Number.isFinite(n) && n >= 0) ((s.postMediaMaxHeight = Math.round(n)), save(), this.plugin.scanActiveAudio());
+									})
+							);
 						},
 					},
 					{
