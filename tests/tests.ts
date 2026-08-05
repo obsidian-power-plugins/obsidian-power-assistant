@@ -225,6 +225,34 @@ ok(bare.includes('source: "https://youtu.be/x"') && !bare.includes("![["), "url 
 	// two pictures on one line, one resized
 	const pair = "## Media\n\n![[a.jpg]] ![[b.jpg]]";
 	eq(withEmbedSize(pair, "b.jpg", 250), "## Media\n\n![[a.jpg]] ![[b.jpg|250]]", "the right one of two on a line is resized");
+
+	// --- turning a clip into a GIF ---
+	// A GIF stores every frame whole, so the frame count is the file size. When
+	// the budget will not cover the clip, the rate drops rather than the clip
+	// being cut short: a meme's point is usually its last second.
+	const { planGifFrames, gifSize } = require("../src/pipeline");
+	eq(planGifFrames(0, 12, 200), { times: [], delayMs: 0 }, "a clip with no length yields no frames");
+	eq(planGifFrames(NaN, 12, 200), { times: [], delayMs: 0 }, "and neither does one whose length never resolved");
+	const short = planGifFrames(1, 10, 200);
+	eq(short.times.length, 10, "a one-second clip at ten a second is ten frames");
+	eq(short.delayMs, 100, "held a tenth of a second each, which is life speed");
+	eq(short.times[0], 0, "the first frame is the first instant");
+	ok(short.times[short.times.length - 1] < 1, "and the last one is inside the clip, not past its end");
+
+	// the budget case: 10 seconds at 12 a second wants 120, and only 60 are allowed
+	const thinned = planGifFrames(10, 12, 60);
+	eq(thinned.times.length, 60, "the budget caps the frame count");
+	ok(thinned.times[thinned.times.length - 1] > 9, "but the frames still span the whole clip rather than stopping part-way");
+	eq(thinned.delayMs, 167, "and each is held longer, so the GIF plays at life speed instead of in slow motion");
+	eq(planGifFrames(60, 12, 1).times, [0], "a budget of one frame is a still, not a failure");
+	// nothing shorter than a browser will honour
+	ok(planGifFrames(1, 1000, 5000).delayMs >= 20, "an absurd rate still asks for a delay browsers respect");
+
+	eq(gifSize(812, 718, 480), { width: 480, height: 424 }, "a clip wider than the cap is scaled, keeping its shape");
+	eq(gifSize(320, 240, 480), { width: 320, height: 240 }, "a small clip is left alone rather than blown up");
+	eq(gifSize(481, 481, 480), { width: 480, height: 480 }, "a clip barely over the cap comes to the cap");
+	const odd = gifSize(305, 271, 480);
+	ok(odd.width % 2 === 0 && odd.height % 2 === 0, "the size is even, which decoders prefer");
 }
 {
 	const { tagify } = require("../src/pipeline");

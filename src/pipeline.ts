@@ -4013,6 +4013,39 @@ export function withEmbedSize(md: string, link: string, width: number): string {
 		.join("\n");
 }
 
+/** Which instants of a clip become the frames of a GIF, and how long each one
+ *  is held.
+ *
+ *  A frame budget is the real constraint: a GIF stores every frame whole, so
+ *  the file grows with the count and a fast clip encoded honestly reaches tens
+ *  of megabytes. When the budget will not cover the clip at the asked-for rate,
+ *  the RATE drops rather than the clip being cut short. A meme's whole point is
+ *  usually its last second, and half a joke is worth less than a choppy one.
+ *
+ *  The delay follows the spacing actually used, so a thinned GIF still plays at
+ *  life speed instead of in slow motion. Below about 20ms browsers substitute
+ *  their own delay, so nothing shorter is asked for. */
+export function planGifFrames(durationSec: number, fps: number, maxFrames: number): { times: number[]; delayMs: number } {
+	const dur = Number.isFinite(durationSec) ? Math.max(0, durationSec) : 0;
+	if (!dur || fps <= 0 || maxFrames < 1) return { times: [], delayMs: 0 };
+	const count = Math.max(1, Math.min(Math.floor(maxFrames), Math.round(dur * fps)));
+	const step = dur / count;
+	const times: number[] = [];
+	for (let i = 0; i < count; i++) times.push(Math.round(i * step * 1000) / 1000);
+	return { times, delayMs: Math.max(20, Math.round(step * 1000)) };
+}
+
+/** The size a GIF is written at: the clip's own, unless that is wider than the
+ *  cap. Never enlarged, because scaling a small clip up spends bytes on
+ *  nothing. Even dimensions, which some decoders are happier with. */
+export function gifSize(videoWidth: number, videoHeight: number, maxWidth: number): { width: number; height: number } {
+	const w = Math.max(1, Math.round(videoWidth));
+	const h = Math.max(1, Math.round(videoHeight));
+	const scale = Math.min(1, maxWidth / w);
+	const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+	return { width: even(w * scale), height: even(h * scale) };
+}
+
 /** Whether a rendered embed is the one a `![[…]]` link names.
  *
  *  Obsidian puts the link's own text in the embed's `src`, and that text is
