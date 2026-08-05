@@ -2,6 +2,19 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.92.0
+
+### Changed
+
+- **A post's video is no longer transcribed when the post already says what it means in words.** This file has always said that a post is its words and the audio is a bonus, and the capture now behaves that way. Transcribing costs a download and an API call, and on a post with a caption it routinely buys nothing: the audio under a meme is music, and the transcript comes back empty. A wordless video post is still transcribed, because its audio is the only thing there to capture. The old behaviour is **Transcribe a post's video → Always** on the Capture tab, which is worth choosing if you capture talking-head clips whose captions say little; **Never** skips the download too.
+- A transcription key is now only demanded when a capture is actually going to transcribe something. It used to be required to capture any post carrying video, including ones whose audio was never going to be read.
+
+### Faster
+
+- **One yt-dlp run instead of two.** Describing a post and downloading its audio were separate calls, and each paid the whole cost of starting the program: on a machine where the launcher is not on PATH, that is Python's startup twice. Measured on a ten-second post, the pair took 3.1 seconds and the single run takes 1.8.
+- **The work that does not depend on other work now runs alongside it.** X's own read of a post goes out with the yt-dlp call rather than after it, and the pictures download while the audio is being transcribed, instead of waiting for it to finish.
+- The way of invoking yt-dlp that worked is remembered for the next call, so a machine where the launcher is off PATH stops paying for a failed start every time.
+
 ## 1.91.0
 
 ### Added
