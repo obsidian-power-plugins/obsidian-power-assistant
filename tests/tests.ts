@@ -93,6 +93,139 @@ const bare = assembleNote({
 });
 ok(bare.includes("No extraction ran") && !bare.includes("## Transcript") && !bare.includes("model:"), "keyless note degrades gracefully");
 ok(bare.includes('source: "https://youtu.be/x"') && !bare.includes("![["), "url source carries no embed");
+
+// --- a post whose content is a picture ---
+// The media leads: filing it under a summary of itself buries the thing captured,
+// and a wordless post filed without it is a note about nothing at all.
+{
+	const { replaceExtractedBody, formatSummaryForClipboard } = require("../src/pipeline");
+	const post = assembleNote({
+		title: "Post from @a",
+		date: "d",
+		source: "https://x.com/a/status/1",
+		embed: null,
+		body: "## Summary\n\n- a joke about rate limits",
+		transcript: "the post's own words",
+		includeTranscript: true,
+		model: null,
+		media: "![[Sources/Post from @a.mp4]]",
+		transcriptHeading: "Post",
+		leadWithText: true,
+	});
+	ok(post.includes("## Media\n\n![[Sources/Post from @a.mp4]]"), "the saved media becomes a Media section");
+	ok(post.indexOf("## Media") < post.indexOf("## Post"), "which leads the post's own words");
+	ok(post.indexOf("## Media") < post.indexOf("## Summary"), "and the extraction written about them");
+
+	// a re-extract must swap the summary and leave the picture alone. Before the
+	// trailing-player test learned to tell a leading embed from a trailing one,
+	// this wrote the new body ABOVE the media and left the old one below it
+	const again = replaceExtractedBody(post, "## Summary\n\n- a better joke");
+	ok(again.includes("- a better joke") && !again.includes("- a joke about rate limits"), "a re-extract replaces the extraction");
+	eq((again.match(/## Summary/g) || []).length, 1, "exactly once: the old one does not survive below the picture as a duplicate");
+	ok(again.includes("## Media\n\n![[Sources/Post from @a.mp4]]"), "and the media survives it untouched");
+	ok(again.includes("## Post\n\nthe post's own words"), "as do the post's own words");
+	ok(again.indexOf("## Media") < again.indexOf("## Summary"), "with the order of the note preserved");
+
+	// the trailing recording players are still recognized for what they are
+	const meeting = ["---", "date: d", "---", "# Standup", "", "## Summary", "", "old", "", "## Transcript", "", "**A [0:01]:** hi", "", "![[Capture/a.webm]]", "![[Capture/b.webm]]", ""].join("\n");
+	const swapped = replaceExtractedBody(meeting, "## Summary\n\nnew");
+	ok(swapped.includes("new") && !swapped.includes("old"), "a meeting re-extract still swaps its body");
+	ok(swapped.includes("![[Capture/a.webm]]") && swapped.includes("![[Capture/b.webm]]"), "and both players are still parked at the bottom");
+
+	// pasted into an email, a vault embed is a filename where a picture was
+	const pasted = formatSummaryForClipboard(post);
+	ok(!pasted.includes("## Media") && !pasted.includes(".mp4"), "the clipboard summary carries no vault embed");
+	ok(pasted.includes("- a joke about rate limits"), "but it does carry the summary");
+
+	// a wordless post is not a note with an apology in it: nothing was extracted
+	// because there was nothing to extract from, and the key is not the problem
+	const wordless = assembleNote({
+		title: "Post from @a",
+		date: "d",
+		source: "https://x.com/a/status/1",
+		embed: null,
+		body: null,
+		transcript: "",
+		includeTranscript: true,
+		model: null,
+		media: "![[Sources/Post from @a.mp4]]",
+		nothingToExtract: true,
+	});
+	ok(!wordless.includes("No extraction ran"), "a post with nothing to extract from does not blame a missing API key");
+	ok(wordless.includes("![[Sources/Post from @a.mp4]]"), "and the note is the picture, which is what was captured");
+
+	// the whole note is one Media section, so its embed is the last line of the
+	// file: a re-extract must still not read that as the trailing players and
+	// write the summary between the heading and its picture
+	const later = replaceExtractedBody(wordless, "## Summary\n\n- a joke about rate limits");
+	ok(later.includes("## Media\n\n![[Sources/Post from @a.mp4]]"), "a media-only note keeps its picture under its heading when it is re-extracted");
+	ok(later.indexOf("## Media") < later.indexOf("## Summary"), "and the summary lands below the picture, not through it");
+	ok(later.includes("- a joke about rate limits"), "with the new extraction actually written");
+
+	// --- whose embed the player belongs to ---
+	// A recording and a post's picture are both ![[…]] lines, and only the first
+	// gets the transport bar. Claiming the second hid the GIF behind a scrubber
+	// that plays silence, which is what a captured post looked like at first.
+	const { recordingEmbeds } = require("../src/pipeline");
+	eq(recordingEmbeds(""), [], "an empty note embeds nothing");
+	eq(recordingEmbeds(wordless), [], "a post whose only embed is its own media has no recording to play");
+	eq(
+		recordingEmbeds(["## Media", "", "![[post.mp4]]", "", "## Transcript", "", "**A [0:01]:** hi", "", "![[Capture/a.webm]]", "![[Capture/b.webm]]"].join("\n")),
+		["Capture/a.webm", "Capture/b.webm"],
+		"a note with both keeps the recordings and skips the post's media"
+	);
+	eq(recordingEmbeds("## Screens\n\n**[7:03]** ![[a.webp]]"), ["a.webp"], "an embed outside the Media section is found wherever it sits on the line");
+	eq(recordingEmbeds("## Media\n\n![[a.mp4]]\n![[b.jpg]]"), [], "every item of a multi-picture post is skipped, not just the first");
+
+	// the other half of the same split: what the post brought, which is what gets
+	// played on open. Together they must cover every embed and share none
+	const { postMediaEmbeds } = require("../src/pipeline");
+	const both = ["## Media", "", "![[post.mp4]]", "![[post 2.jpg]]", "", "## Transcript", "", "![[Capture/a.webm]]"].join("\n");
+	eq(postMediaEmbeds(both), ["post.mp4", "post 2.jpg"], "the post's own pictures are the Media section's embeds");
+	eq(recordingEmbeds(both), ["Capture/a.webm"], "and the recording is everything else");
+	eq(postMediaEmbeds("## Transcript\n\n![[Capture/a.webm]]"), [], "a note with no Media section brought no pictures");
+
+	// matching a link to the embed Obsidian rendered from it
+	const { embedSrcMatches } = require("../src/pipeline");
+	const saved = "_resources/attachments/2026-08-05 Pov - 2 hours before deadline.mp4";
+	ok(embedSrcMatches(saved, saved), "the path a capture writes matches itself");
+	ok(embedSrcMatches(saved, "2026-08-05 Pov - 2 hours before deadline.mp4"), "and matches the bare filename a shortened link renders as");
+	ok(embedSrcMatches("post.mp4", "Attachments/post.mp4"), "a short link matches a resolved path");
+	ok(!embedSrcMatches("a.mp4", "extra.mp4"), "a filename is not matched by anything merely ending in it");
+	ok(!embedSrcMatches(saved, "Capture/standup.webm"), "a recording is never mistaken for the post's picture");
+	ok(!embedSrcMatches("", "a.mp4") && !embedSrcMatches("a.mp4", ""), "an empty side matches nothing");
+
+	// --- a size dragged onto a picture ---
+	// Obsidian resizes an image by writing "|400" into the link and gives a video
+	// no handle at all. Sharing the notation is what keeps a resized capture an
+	// ordinary note rather than one only this plugin can read.
+	const { parseEmbedSize, withEmbedSize, postMediaRefs } = require("../src/pipeline");
+	eq(parseEmbedSize("400"), { width: 400 }, "a bare number is a width");
+	eq(parseEmbedSize("400x300"), { width: 400, height: 300 }, "and a pair is both");
+	eq(parseEmbedSize(" 400 X 300 "), { width: 400, height: 300 }, "spacing and case are not the point");
+	eq(parseEmbedSize(""), null, "no alias, no size");
+	eq(parseEmbedSize("a caption"), null, "display text is not a size");
+	eq(parseEmbedSize("0"), null, "and neither is a width of nothing");
+
+	const sized = ["## Media", "", "![[post.mp4]]", "", "## Post", "", "see ![[post.mp4]] above"].join("\n");
+	eq(postMediaRefs(sized), [{ link: "post.mp4", size: "" }], "an unsized embed reports no size");
+	const w = withEmbedSize(sized, "post.mp4", 420);
+	ok(w.includes("![[post.mp4|420]]"), "a dragged width is written into the link");
+	ok(w.includes("see ![[post.mp4]] above"), "and only in the Media section: the same file named elsewhere is left alone");
+	eq(w.split("\n").length, sized.split("\n").length, "the line count never changes, so the editor can swap one line");
+	eq(postMediaRefs(w), [{ link: "post.mp4", size: "420" }], "the size reads back off the note");
+	eq(withEmbedSize(w, "post.mp4", 0), sized, "a width of zero clears it and gives the note back exactly as it was");
+	ok(!withEmbedSize(w, "other.mp4", 100).includes("other.mp4|100"), "a link that is not there is not added");
+
+	// a caption is not a size and must survive being reset
+	const captioned = "## Media\n\n![[post.mp4|the meme]]";
+	eq(withEmbedSize(captioned, "post.mp4", 0), captioned, "display text after the pipe is never dropped");
+	ok(withEmbedSize(captioned, "post.mp4", 300).includes("![[post.mp4|300]]"), "though a size does replace it, as Obsidian's own drag does");
+
+	// two pictures on one line, one resized
+	const pair = "## Media\n\n![[a.jpg]] ![[b.jpg]]";
+	eq(withEmbedSize(pair, "b.jpg", 250), "## Media\n\n![[a.jpg]] ![[b.jpg|250]]", "the right one of two on a line is resized");
+}
 {
 	const { tagify } = require("../src/pipeline");
 	eq(tagify("claude-haiku-4-5"), "claude-haiku-4-5", "a model id is already a valid tag");
@@ -460,6 +593,92 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(vid.info.title, "Post from @elonmusk", "the title falls back to the author, as it already did");
 	eq(vid.info.likes, 105510, "the counts are still read off the payload");
 	eq(parseTweetEmbed({ text: "Just words", user: { screen_name: "a" } }).hasVideo, undefined, "a text post reports no video rather than false");
+
+	// --- the pictures a post is actually about ---
+	// A wordless post is not an empty post: its content is the picture, and a note
+	// that keeps the words and drops the media has kept the packaging.
+	{
+		const { tweetMedia, bestVideoVariant, variantPixels, postMediaFileName } = require("../src/pipeline");
+
+		eq(variantPixels("https://video.twimg.com/x/vid/avc1/812x718/a.mp4"), 583016, "the frame size in the address is readable");
+		eq(variantPixels("https://pbs.twimg.com/media/a.jpg"), 0, "an address with no size in it reports none");
+
+		eq(bestVideoVariant(undefined), null, "no variants, no file");
+		eq(bestVideoVariant([{ content_type: "application/x-mpegURL", url: "https://x/a.m3u8" }]), null, "an HLS playlist is not a video file and is never kept");
+		eq(
+			bestVideoVariant([
+				{ content_type: "video/mp4", bitrate: 256000, url: "https://x/small.mp4" },
+				{ content_type: "video/mp4", bitrate: 2176000, url: "https://x/big.mp4" },
+				{ content_type: "video/mp4", bitrate: 832000, url: "https://x/mid.mp4" },
+			]),
+			"https://x/big.mp4",
+			"the highest bitrate wins whatever order they are listed in"
+		);
+		// the top-level block quotes no bitrates at all, so taking the first would
+		// store the smallest copy X offers
+		eq(
+			bestVideoVariant([
+				{ type: "application/x-mpegURL", src: "https://x/a.m3u8" },
+				{ type: "video/mp4", src: "https://video.twimg.com/x/vid/avc1/304x270/s.mp4" },
+				{ type: "video/mp4", src: "https://video.twimg.com/x/vid/avc1/812x718/b.mp4" },
+			]),
+			"https://video.twimg.com/x/vid/avc1/812x718/b.mp4",
+			"with no bitrates quoted the frame size decides, so the biggest copy is kept"
+		);
+
+		eq(tweetMedia({}), [], "a payload with no media reports none");
+		eq(tweetMedia({ photos: [{ url: "https://pbs.twimg.com/media/a.jpg" }, { url: "https://pbs.twimg.com/media/b.jpg" }] }), [{ kind: "photo", url: "https://pbs.twimg.com/media/a.jpg" }, { kind: "photo", url: "https://pbs.twimg.com/media/b.jpg" }], "photos are read in the order X lists them");
+		eq(
+			tweetMedia({ mediaDetails: [{ type: "animated_gif", media_url_https: "https://pbs.twimg.com/tweet_video_thumb/a.jpg", video_info: { variants: [{ content_type: "video/mp4", bitrate: 0, url: "https://video.twimg.com/tweet_video/a.mp4" }] } }] }),
+			[{ kind: "gif", url: "https://video.twimg.com/tweet_video/a.mp4", poster: "https://pbs.twimg.com/tweet_video_thumb/a.jpg" }],
+			"a GIF is kept as the MP4 X converted it into, not as a still of one frame"
+		);
+		eq(
+			tweetMedia({ mediaDetails: [{ type: "video", media_url_https: "https://pbs.twimg.com/p.jpg", video_info: { variants: [{ content_type: "application/x-mpegURL", url: "https://x/a.m3u8" }] } }] }),
+			[{ kind: "photo", url: "https://pbs.twimg.com/p.jpg" }],
+			"a video served only as HLS falls back to its poster, which is a picture rather than a link that will rot"
+		);
+		// mediaDetails is the only place a GIF is told from a video, so it is read
+		// first even when the top-level block describes the same thing
+		eq(
+			tweetMedia({
+				mediaDetails: [{ type: "animated_gif", media_url_https: "https://pbs.twimg.com/g.jpg", video_info: { variants: [{ content_type: "video/mp4", bitrate: 0, url: "https://video.twimg.com/g.mp4" }] } }],
+				video: { variants: [{ type: "video/mp4", src: "https://video.twimg.com/other.mp4" }] },
+			})[0].kind,
+			"gif",
+			"the detail list wins over the top-level block, which calls a GIF a video"
+		);
+
+		// the real payload for the post that started this, trimmed to what is read
+		const meme = {
+			text: "https://t.co/ocv3hhW8i3",
+			user: { name: "Sarthak", screen_name: "Sarthak4Alpha" },
+			entities: { media: [{ url: "https://t.co/ocv3hhW8i3" }] },
+			mediaDetails: [
+				{
+					type: "video",
+					media_url_https: "https://pbs.twimg.com/amplify_video_thumb/2084679208459223043/img/BZcro_7cBOp6RbG2.jpg",
+					video_info: {
+						variants: [
+							{ content_type: "application/x-mpegURL", url: "https://video.twimg.com/amplify_video/2084679208459223043/pl/Nbxrk8Ds-S-_MbbL.m3u8?v=cfc" },
+							{ content_type: "video/mp4", bitrate: 256000, url: "https://video.twimg.com/amplify_video/2084679208459223043/vid/avc1/304x270/t5Y0MEeb4_O7O6U5.mp4" },
+							{ content_type: "video/mp4", bitrate: 2176000, url: "https://video.twimg.com/amplify_video/2084679208459223043/vid/avc1/812x718/gIvRlcDsUsYLi_b3.mp4" },
+						],
+					},
+				},
+			],
+			video: { durationMs: 12566 },
+		};
+		const read = parseTweetEmbed(meme);
+		eq(read.text, "", "the post still reports no words of its own");
+		eq(read.media, [{ kind: "video", url: "https://video.twimg.com/amplify_video/2084679208459223043/vid/avc1/812x718/gIvRlcDsUsYLi_b3.mp4", poster: "https://pbs.twimg.com/amplify_video_thumb/2084679208459223043/img/BZcro_7cBOp6RbG2.jpg" }], "but it reports the video it is entirely about, which is the whole content of the note");
+		ok(parseTweetEmbed({ mediaDetails: [{ type: "photo", media_url_https: "https://pbs.twimg.com/media/a.jpg" }] }) !== null, "a payload carrying only a picture is still a post that was read");
+
+		eq(postMediaFileName("2026-08-05 Post from @Sarthak4Alpha", "https://video.twimg.com/x/a.mp4", 0, 1), "2026-08-05 Post from @Sarthak4Alpha.mp4", "one item is named after the note alone");
+		eq(postMediaFileName("Post", "https://x/a.jpg", 1, 3), "Post 2.jpg", "several are numbered as a reader would count them");
+		eq(postMediaFileName("a/b:c", "https://x/a.png?name=orig", 0, 1), "a-b-c.png", "the note name is made safe and the query is not part of the extension");
+		eq(postMediaFileName("", "https://x/nameless", 0, 1), "post.jpg", "an unnamed file and an unnamed note both fall back rather than failing");
+	}
 
 	// --- re-reading a captured post's counts ---
 	// A capture is a snapshot; likes and views keep moving after it is filed.

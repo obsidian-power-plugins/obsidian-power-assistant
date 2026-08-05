@@ -873,6 +873,14 @@ export function assembleNote(opts: {
 	transcriptHeading?: string;
 	/** Put the captured text directly under the title, above the extraction. */
 	leadWithText?: boolean;
+	/** The post's own pictures, already saved into the vault, as embed lines.
+	 *  They lead the note, because a post whose whole point is a picture reads
+	 *  as a note about nothing until you reach it. */
+	media?: string | null;
+	/** No extraction ran because there was nothing to extract from, rather than
+	 *  because no key is configured. Telling someone whose key is fine to go and
+	 *  configure one sends them off to fix what is not broken. */
+	nothingToExtract?: boolean;
 	/** The file the note is being written to. When its name already carries the
 	 *  title, the "# Title" line is left out: Obsidian shows the filename above
 	 *  the note, and a heading repeating it is the same words twice. */
@@ -900,6 +908,9 @@ export function assembleNote(opts: {
 	const titled = !titleShownByFilename(opts.title, opts.filename ?? "");
 	const parts = [titled ? `${fm}\n# ${opts.title}` : fm];
 	if (opts.speakersLine) parts.push(`**Speakers:** ${opts.speakersLine}`);
+	// above the words and the extraction both: the picture IS the post, and a
+	// note that files it below a summary of it has buried the thing captured
+	if (opts.media?.trim()) parts.push(`## Media\n\n${opts.media.trim()}`);
 	const heading = opts.transcriptHeading ?? "Transcript";
 	// a failed extraction ALWAYS keeps the transcript, whatever the setting
 	// after a good transcription it's the only copy of what was paid for
@@ -921,7 +932,7 @@ export function assembleNote(opts: {
 		parts.push(
 			`> [!warning] Extraction failed: the ${heading.toLowerCase()} is saved below.\n> ${opts.extractionError.replace(/\s+/g, " ").trim()}\n> Run **Re-extract this capture** to try again.`
 		);
-	else parts.push("*No extraction ran (configure an Anthropic API key in Power Assistant settings).*");
+	else if (!opts.nothingToExtract) parts.push("*No extraction ran (configure an Anthropic API key in Power Assistant settings).*");
 	if (opts.carryOver) parts.push(`## Carried over\n\n${opts.carryOver}`);
 	// Screens are not written here. They are found by scanning the video, which
 	// happens after the note exists so a summary is readable a minute sooner, and
@@ -1354,6 +1365,10 @@ export interface MediaDump {
 	 *  captured either way records it under the same property. */
 	comment_count?: number;
 	extractor_key?: string;
+	/** The still yt-dlp reports for a post, on every extractor it has. It is what
+	 *  a capture keeps when the post's own media is out of reach, so that a note
+	 *  about something visual is never a note with no picture in it. */
+	thumbnail?: string;
 }
 
 /** yt-dlp's --dump-json reduced to the metadata a note keeps, for any site.
@@ -1740,17 +1755,136 @@ export interface TweetEmbedBase {
 	entities?: { media?: { url?: string }[] };
 }
 
+/** One address a post's video is served from. The two places X lists these
+ *  spell the same two fields differently, so both spellings are read: a
+ *  `mediaDetails` entry says `content_type` and `url`, the top-level `video`
+ *  block says `type` and `src`. */
+export interface TweetVariant {
+	content_type?: string;
+	type?: string;
+	url?: string;
+	src?: string;
+	bitrate?: number;
+}
+
+/** One item of a post's media, as the embed payload describes it. */
+export interface TweetMediaDetail {
+	/** "photo", "video", or "animated_gif". */
+	type?: string;
+	/** The still: the picture itself for a photo, the poster frame otherwise. */
+	media_url_https?: string;
+	video_info?: { variants?: TweetVariant[] };
+}
+
 export interface TweetEmbed extends TweetEmbedBase {
 	favorite_count?: number;
 	conversation_count?: number;
 	/** Present when the post carries video. A post with no words that has one is
 	 *  a capture waiting on yt-dlp, not an empty post, and the two are worth
 	 *  telling apart when explaining why nothing was captured. */
-	video?: { durationMs?: number };
+	video?: { durationMs?: number; poster?: string; variants?: TweetVariant[] };
+	/** Every picture, GIF and video the post holds up, each saying which it is.
+	 *  The only place that distinction is made: the block above says "video"
+	 *  about a GIF too. */
+	mediaDetails?: TweetMediaDetail[];
+	/** The photos alone, for a payload that describes them nowhere else. */
+	photos?: { url?: string }[];
 	/** The post this one quotes. */
 	quoted_tweet?: TweetEmbedBase;
 	/** The post this one answers, when the capture target is itself a reply. */
 	parent?: TweetEmbedBase;
+}
+
+/** One picture, GIF, or video hanging off a post.
+ *
+ *  `kind` is not decoration. It decides what happens when the file is too big
+ *  to keep: a photo is saved whole or not at all, while a video has a poster
+ *  frame to fall back to, which is a poorer record of the post but still a
+ *  picture of it. */
+export interface PostMedia {
+	kind: "photo" | "gif" | "video";
+	url: string;
+	/** The still shown before a video plays. Absent on a photo, which is its own
+	 *  still. */
+	poster?: string;
+}
+
+/** The frame size named in an X media address, as a pixel count, or 0.
+ *
+ *  X puts the dimensions in the path ("…/vid/avc1/812x718/…"), which is the only
+ *  thing separating the variants when the payload quotes no bitrates. */
+export function variantPixels(url: string): number {
+	const m = (url || "").match(/\/(\d{2,5})x(\d{2,5})\//);
+	return m ? +m[1] * +m[2] : 0;
+}
+
+/** The best single file among a post's video variants, or null.
+ *
+ *  Highest bitrate wins, and the frame size in the address breaks the tie,
+ *  because the top-level variant list quotes no bitrates at all and taking the
+ *  first would store the smallest copy X offers.
+ *
+ *  HLS playlists are passed over however high they rank. A .m3u8 is a list of
+ *  segment addresses rather than a video, so keeping one puts a text file in
+ *  the vault that plays nothing the moment X stops serving what it names. */
+export function bestVideoVariant(variants: TweetVariant[] | undefined): string | null {
+	let best: { url: string; rank: [number, number] } | null = null;
+	for (const v of variants ?? []) {
+		const mime = (v.content_type ?? v.type ?? "").toLowerCase();
+		const url = (v.url ?? v.src ?? "").trim();
+		if (!url || !mime.includes("mp4")) continue;
+		const rank: [number, number] = [typeof v.bitrate === "number" ? v.bitrate : 0, variantPixels(url)];
+		if (!best || rank[0] > best.rank[0] || (rank[0] === best.rank[0] && rank[1] > best.rank[1])) best = { url, rank };
+	}
+	return best?.url ?? null;
+}
+
+/** Everything a post holds up to look at, in the order X lists it.
+ *
+ *  `mediaDetails` is read first because it is the only part of the payload that
+ *  tells a GIF from a video and names photos beside them; the top-level blocks
+ *  are the fallback for a payload carrying one without the other.
+ *
+ *  A GIF comes back as an MP4, because that is what X stores: uploading a GIF
+ *  converts it to a silent looping video. It is still the whole point of the
+ *  post, so it is kept as a file rather than reduced to a still of its first
+ *  frame, which of an animation is a picture of almost nothing.
+ *
+ *  A video whose variants are all HLS falls back to its poster, on the same
+ *  reasoning: a frame of it is worth more in a note than a link that will rot. */
+export function tweetMedia(j: TweetEmbed): PostMedia[] {
+	const out: PostMedia[] = [];
+	for (const m of j.mediaDetails ?? []) {
+		const still = (m.media_url_https ?? "").trim();
+		if (m.type !== "video" && m.type !== "animated_gif") {
+			if (still) out.push({ kind: "photo", url: still });
+			continue;
+		}
+		const kind = m.type === "animated_gif" ? "gif" : "video";
+		const url = bestVideoVariant(m.video_info?.variants);
+		if (url) out.push(still ? { kind, url, poster: still } : { kind, url });
+		else if (still) out.push({ kind: "photo", url: still });
+	}
+	if (out.length) return out;
+	for (const p of j.photos ?? []) {
+		const url = (p.url ?? "").trim();
+		if (url) out.push({ kind: "photo", url });
+	}
+	const poster = (j.video?.poster ?? "").trim();
+	const url = bestVideoVariant(j.video?.variants);
+	if (url) out.push(poster ? { kind: "video", url, poster } : { kind: "video", url });
+	else if (poster) out.push({ kind: "photo", url: poster });
+	return out;
+}
+
+/** The filename a post's saved media lands under: the note's own name, an index
+ *  when the post carries more than one, and the extension off the address.
+ *  Mirrors `frameFileName`, so an attachments folder holding both reads as one
+ *  set rather than two conventions. */
+export function postMediaFileName(noteBase: string, url: string, index: number, total: number): string {
+	const base = (noteBase || "post").replace(/[\\/:*?"<>|#^[\]]/g, "-").replace(/\s+/g, " ").trim() || "post";
+	const ext = ((url || "").split(/[?#]/)[0].match(/\.([a-z0-9]{2,4})$/i)?.[1] ?? "jpg").toLowerCase();
+	return total > 1 ? `${base} ${index + 1}.${ext}` : `${base}.${ext}`;
 }
 
 /** A post's own words, with the links X appended for its own media removed.
@@ -1790,6 +1924,9 @@ export interface TweetRead {
 	info: MediaInfo;
 	/** Only the embed payload knows this; oEmbed does not say. */
 	hasVideo?: boolean;
+	/** The pictures, GIFs and videos the post carries. Empty from oEmbed, which
+	 *  describes none of them. */
+	media?: PostMedia[];
 }
 
 /** A post's words plus the context that makes them mean something.
@@ -1807,7 +1944,8 @@ export function parseTweetEmbed(j: TweetEmbed): TweetRead | null {
 	const own = tweetOwnText(j);
 	const parent = quotedBlock(j.parent, "In reply to");
 	const quoted = quotedBlock(j.quoted_tweet, "Quoting");
-	if (!own && !parent && !quoted && !(j.text ?? "").trim() && !j.user) return null;
+	const media = tweetMedia(j);
+	if (!own && !parent && !quoted && !(j.text ?? "").trim() && !j.user && !media.length) return null;
 	const text = [parent, own, quoted].filter(Boolean).join("\n\n");
 	const author = (j.user?.name ?? "").trim();
 	const handle = (j.user?.screen_name ?? "").trim();
@@ -1823,6 +1961,7 @@ export function parseTweetEmbed(j: TweetEmbed): TweetRead | null {
 	if (typeof j.conversation_count === "number") info.replies = j.conversation_count;
 	const read: TweetRead = { text, info };
 	if (j.video) read.hasVideo = true;
+	if (media.length) read.media = media;
 	return read;
 }
 
@@ -3694,7 +3833,24 @@ export const SOURCE_HEADINGS = ["Transcript", "Post", "Article"] as const;
  *  whole recording, the image files stay in the vault whatever the note says,
  *  and a re-extract that dropped the section would leave them orphaned with no
  *  way back to the moments they came from. */
-const KEPT_SECTION = new RegExp(`^## (Carried over|Moments|Screens|${SOURCE_HEADINGS.join("|")})\\b`);
+const KEPT_SECTION = new RegExp(`^## (Carried over|Media|Moments|Screens|${SOURCE_HEADINGS.join("|")})\\b`);
+
+/** Whether the note from line `k` on is nothing but embeds and blank lines.
+ *
+ *  This is what a bare `![[…]]` line is really being tested for: the recording
+ *  players parked at the very bottom of a capture, which a re-extract must
+ *  write above rather than over. An embed with real note still to come below it
+ *  is a different thing entirely — a post's media, which leads the note it
+ *  belongs to — and reading that one as the end of the body would write the new
+ *  extraction above the picture and leave the old one below it, surviving as a
+ *  duplicate. */
+function isTrailingEmbedRun(lines: string[], k: number): boolean {
+	for (let n = k; n < lines.length; n++) {
+		const t = lines[n].trim();
+		if (t && !/^!\[\[/.test(t)) return false;
+	}
+	return true;
+}
 
 /** Replace the extracted sections of an assembled note, preserving
  *  frontmatter, title, the Speakers line, Carried over, Moments, the
@@ -3750,18 +3906,124 @@ function extractedBodyRange(lines: string[]): { from: number; to: number } {
 		let lead = i;
 		while (lead < lines.length && !lines[lead].trim()) lead++;
 		if (!KEPT_SECTION.test(lines[lead] ?? "")) break;
+		// a Media section's body IS embeds, so an embed cannot also be the start of
+		// the trailing players while one is being scanned: the picture belongs to
+		// the heading above it. Without this, a post whose whole content is a
+		// picture has its re-extracted summary written between the two.
+		const embedsAreBody = /^## Media\b/.test(lines[lead]);
 		let k = lead + 1;
-		while (k < lines.length && !/^## /.test(lines[k]) && !/^!\[\[/.test(lines[k])) k++;
+		while (k < lines.length && !/^## /.test(lines[k]) && !(!embedsAreBody && /^!\[\[/.test(lines[k]) && isTrailingEmbedRun(lines, k))) k++;
 		i = k;
 	}
 	let end = lines.length;
 	for (let k = i; k < lines.length; k++) {
-		if (KEPT_SECTION.test(lines[k]) || /^!\[\[/.test(lines[k])) {
+		if (KEPT_SECTION.test(lines[k]) || (/^!\[\[/.test(lines[k]) && isTrailingEmbedRun(lines, k))) {
 			end = k;
 			break;
 		}
 	}
 	return { from: i, to: end };
+}
+
+/** Everything a note embeds EXCEPT what sits under "## Media", in document
+ *  order.
+ *
+ *  A recording and a post's own pictures are both `![[…]]` lines, and only the
+ *  first kind is what the sticky player, the frame grab, and the stamp seeks
+ *  are about. A GIF captured from a post is not a recording of anything: giving
+ *  it a transport bar hides the picture behind a scrubber that plays silence,
+ *  which is exactly what happened the first time a capture kept one. */
+export function recordingEmbeds(md: string): string[] {
+	const out: string[] = [];
+	let inMedia = false;
+	for (const line of (md || "").split("\n")) {
+		if (/^## /.test(line)) inMedia = /^## Media\b/.test(line);
+		if (inMedia) continue;
+		for (const m of line.matchAll(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)) out.push(m[1]);
+	}
+	return out;
+}
+
+/** An embed as the note writes it: what it points at, and the size written
+ *  after the pipe, which is empty when none was. */
+export interface EmbedRef {
+	link: string;
+	/** The raw text after the pipe: "400", "400x300", or "". */
+	size: string;
+}
+
+/** The post's own pictures with the size each was left at: what
+ *  `recordingEmbeds` leaves out. Together the two cover every embed in the note,
+ *  and nothing belongs to both. */
+export function postMediaRefs(md: string): EmbedRef[] {
+	const out: EmbedRef[] = [];
+	let inMedia = false;
+	for (const line of (md || "").split("\n")) {
+		if (/^## /.test(line)) inMedia = /^## Media\b/.test(line);
+		if (!inMedia) continue;
+		for (const m of line.matchAll(/!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g)) out.push({ link: m[1], size: (m[2] ?? "").trim() });
+	}
+	return out;
+}
+
+/** Just the links, for the callers that only need to know what is post media. */
+export function postMediaEmbeds(md: string): string[] {
+	return postMediaRefs(md).map((r) => r.link);
+}
+
+/** The size written after an embed's pipe, in Obsidian's own notation: "400" is
+ *  a width, "400x300" is both. Null for an empty or unparseable alias, which is
+ *  most of them: the pipe usually carries display text, not a size.
+ *
+ *  Sharing the notation is the point. A width dragged onto a captured video is
+ *  written the same way Obsidian writes one dragged onto an image, so the note
+ *  means the same thing to both and stays an ordinary note. */
+export function parseEmbedSize(alias: string): { width: number; height?: number } | null {
+	const m = (alias || "").trim().match(/^(\d{1,5})(?:\s*x\s*(\d{1,5}))?$/i);
+	if (!m) return null;
+	const width = +m[1];
+	if (!width) return null;
+	const height = m[2] ? +m[2] : 0;
+	return height ? { width, height } : { width };
+}
+
+/** Write a width onto a post's media embed, or take one off with a width of 0.
+ *
+ *  Only the Media section is touched, and only the embed pointing at `link`, so
+ *  a note whose transcript quotes the same filename is left alone. Rewrites
+ *  within the line and never adds or removes one, which is what lets the caller
+ *  apply it through the editor as a single-line replacement and keep the note's
+ *  scroll position. */
+export function withEmbedSize(md: string, link: string, width: number): string {
+	let inMedia = false;
+	return (md || "")
+		.split("\n")
+		.map((line) => {
+			if (/^## /.test(line)) inMedia = /^## Media\b/.test(line);
+			if (!inMedia) return line;
+			return line.replace(/!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (whole, target: string, alias?: string) => {
+				if (target !== link) return whole;
+				if (width > 0) return `![[${target}|${Math.round(width)}]]`;
+				// a size of zero clears it, and any other alias (display text) is
+				// left where it was: it was never ours to drop
+				const keep = parseEmbedSize(alias ?? "") ? "" : (alias ?? "");
+				return keep ? `![[${target}|${keep}]]` : `![[${target}]]`;
+			});
+		})
+		.join("\n");
+}
+
+/** Whether a rendered embed is the one a `![[…]]` link names.
+ *
+ *  Obsidian puts the link's own text in the embed's `src`, and that text is
+ *  whatever was written: the full vault path a capture writes, or the bare
+ *  filename someone shortened it to afterwards. Both have to answer, and a
+ *  suffix match alone would not do it, since "a.mp4" is a suffix of
+ *  "extra.mp4"; the boundary is the separator. */
+export function embedSrcMatches(link: string, src: string): boolean {
+	if (!link || !src) return false;
+	if (link === src) return true;
+	return link.endsWith("/" + src) || src.endsWith("/" + link);
 }
 
 /** The "## Heading" section body of a note, or "". */
@@ -5208,6 +5470,9 @@ export function whisperSizeWarning(bytes: number, endpoint: string): string | nu
  *  whichever comes first takes all three. */
 export function formatSummaryForClipboard(md: string): string {
 	let body = md.replace(/^---\n[\s\S]*?\n---\n/, "");
+	// Media leads the note rather than trailing it, so it is cut on its own and
+	// not by the cut-to-the-end below, which would take the whole note with it
+	body = body.replace(/(^|\n)## Media\n[\s\S]*?(?=\n## |$)/, "$1");
 	body = body.replace(/\n## (Screens|Moments|Transcript)\b[\s\S]*$/m, "\n");
 	body = body.replace(/^!\[\[[^\]]*\]\]\s*$/gm, "");
 	body = body.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_m: string, a: string, b?: string) => (b || a).trim());
