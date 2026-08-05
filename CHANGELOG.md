@@ -2,6 +2,14 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.91.0
+
+### Added
+
+- **A captured clip can be turned into an animated GIF**, from the right-click menu on the picture or the command palette. The GIF is written beside the note and shown in your file manager, ready to copy: one Ctrl+C there and Ctrl+V into Teams or a mail client lands a moving picture. Revealed rather than copied because the clipboard cannot hold one — Chromium writes `image/png` and nothing else, so anything placed on it directly arrives as a single frozen frame, and a GIF *file* is what chat and mail clients actually animate.
+- The numbers behind it were measured rather than guessed, on a ten-second clip: 360 pixels wide, 10 frames a second, 128 colours, which comes to about 5.6 MB and three seconds of work. Full colour at 480 and 12 a second produced 13 MB of the same clip, which is not something to paste into a chat window. A clip too long for the frame budget drops its frame rate rather than being cut short, since the point of a meme is usually its last second, and the GIF is written to loop.
+- Note that classic Outlook on the desktop shows only the first frame of an animated GIF in a message it is composing. Teams, and Outlook on the web, animate it.
+
 ## 1.90.0
 
 ### Added
