@@ -363,7 +363,7 @@ eq(youtubeVideoId("https://www.youtube.com/shorts/e8CW4_yU5Ko"), "e8CW4_yU5Ko", 
 eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield null");
 {
 	// --- capture from a link ---
-	const { xStatusId, isXUrl, postTitleFromText, parseMediaInfo, mediaProps, ytDlpInvocations, ytDlpInfoArgs, ytDlpAudioArgs, ytDlpSubsArgs } = require("../src/pipeline");
+	const { xStatusId, isXUrl, postTitleFromText, parseMediaInfo, mediaProps, ytDlpInvocations, ytDlpInfoArgs, ytDlpAudioAndInfoArgs, parseAudioAndInfo, ytDlpSubsArgs } = require("../src/pipeline");
 	const { hostOf, mediaSiteFor, routeFor, cookieArgs, renderFolder, parseWebMeta, webProps, siteNameFromUrl, cleanArticleMarkdown } = require("../src/pipeline");
 
 	// routing: YouTube keeps its free-caption path, known media sites go to
@@ -459,8 +459,8 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(cookieArgs("firefox").join(" "), "--cookies-from-browser firefox", "a chosen browser becomes the yt-dlp flag");
 	ok(!ytDlpInfoArgs("https://u").includes("--cookies-from-browser"), "the info call carries no cookie flag by default");
 	ok(ytDlpInfoArgs("https://u", "chrome").includes("chrome"), "the info call can borrow cookies");
-	ok(ytDlpAudioArgs("https://u", "o", "edge").includes("edge"), "the download can borrow cookies");
-	eq(ytDlpAudioArgs("https://u", "o", "edge").slice(-1)[0], "https://u", "the URL still goes last once cookies are added");
+	ok(ytDlpAudioAndInfoArgs("https://u", "o", "edge").includes("edge"), "the download can borrow cookies");
+	eq(ytDlpAudioAndInfoArgs("https://u", "o", "edge").slice(-1)[0], "https://u", "the URL still goes last once cookies are added");
 
 	// yt-dlp invocation: pip parks the launcher off PATH, so the module form is
 	// the one that saves a stock install from having to configure anything
@@ -470,13 +470,28 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(ytDlpInvocations("").find((i: { cmd: string }) => i.cmd === "python").pre.join(" "), "-m yt_dlp", "the Python form runs yt_dlp as a module");
 	ok(ytDlpInfoArgs("https://u").includes("--dump-json") && ytDlpInfoArgs("https://u").includes("https://u"), "the info call dumps json for the URL");
 	ok(!ytDlpInfoArgs("https://u").includes("-o"), "the info call never writes a file");
-	const dl = ytDlpAudioArgs("https://u", "/tmp/x.%(ext)s");
+	const dl = ytDlpAudioAndInfoArgs("https://u", "/tmp/x.%(ext)s");
 	eq(dl[dl.indexOf("-f") + 1], "bestaudio/best", "audio-only is preferred, with a muxed fallback");
 	eq(dl[dl.indexOf("-o") + 1], "/tmp/x.%(ext)s", "the output template is passed through");
 	ok(dl.includes("--no-simulate"), "--no-simulate is present, or --print would turn the download into a dry run");
 	eq(dl[dl.indexOf("--print") + 1], "after_move:filepath", "the final path is printed so the caller can find the file");
 	eq(dl[dl.length - 1], "https://u", "the URL goes last");
 	ok(dl.includes("--no-playlist"), "a multi-video post captures only the linked video");
+	// the metadata rides along, so a capture starts the program once instead of
+	// twice: measured at 2.3 seconds against 3.1 for the pair it replaced
+	eq(dl.filter((a: string) => a === "--print").length, 2, "the path and the metadata are both printed by the one run");
+	ok(dl.some((a: string) => a.includes("description") && a.includes("thumbnail")), "and the metadata asked for is the post's, not a video's");
+	ok(!dl.some((a: string) => a.endsWith("#j")), "asked for as one line of JSON: the pretty form spans lines a reader would take for chatter");
+
+	// reading that run back: by shape, because yt-dlp prints its own chatter too
+	const both = parseAudioAndInfo('[info] Downloading\n/tmp/pa-x-1.mp4\n{"title":"t","description":"d","view_count":7}');
+	eq(both.path, "/tmp/pa-x-1.mp4", "the path is the last line that is not JSON");
+	eq(both.dump.view_count, 7, "and the JSON line is the metadata");
+	eq(parseAudioAndInfo("/tmp/only.mp4").dump, null, "a run that printed no metadata still yields the file");
+	eq(parseAudioAndInfo('{"title":"t"}').path, null, "and one that printed no file still yields the metadata");
+	eq(parseAudioAndInfo("").path, null, "nothing printed, nothing read");
+	eq(parseAudioAndInfo('{not json\n/tmp/x.mp4').dump, null, "a line that opens like JSON and is not is chatter, not metadata");
+	eq(parseAudioAndInfo('{not json\n/tmp/x.mp4').path, "/tmp/x.mp4", "and the file beside it is still found");
 
 	// --- nothing but a link becomes an argument ---
 	// yt-dlp reads a leading dash as an option wherever it appears, and its
@@ -491,7 +506,7 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 		}
 	};
 	ok(threw(() => ytDlpInfoArgs("--exec=calc.exe")), "an option in place of a URL is refused, not passed along");
-	ok(threw(() => ytDlpAudioArgs("--exec=calc.exe", "/tmp/x")), "the download call refuses it too");
+	ok(threw(() => ytDlpAudioAndInfoArgs("--exec=calc.exe", "/tmp/x")), "the download call refuses it too");
 	ok(threw(() => ytDlpSubsArgs("--exec=calc.exe", "/tmp/x")), "and so does the caption call");
 	ok(threw(() => ytDlpInfoArgs("-o/tmp/anywhere")), "a short option is refused as well");
 	ok(threw(() => ytDlpInfoArgs("file:///C:/secrets.txt")), "a scheme that is not http(s) is refused");
