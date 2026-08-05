@@ -361,13 +361,86 @@
 /* The embed names its own file, so its extension answers what a :has audio
    test was being asked, without a query that re-runs over the note. The list is
    the one AUDIO_EXTS holds in main.ts. */
-.pa-has-player .internal-embed.media-embed[src$=".webm" i],
-.pa-has-player .internal-embed.media-embed[src$=".m4a" i],
-.pa-has-player .internal-embed.media-embed[src$=".mp3" i],
-.pa-has-player .internal-embed.media-embed[src$=".wav" i],
-.pa-has-player .internal-embed.media-embed[src$=".ogg" i],
-.pa-has-player .internal-embed.media-embed[src$=".flac" i],
-.pa-has-player .internal-embed.media-embed[src$=".mp4" i] {
+/* A captured post's picture is capped by HEIGHT, not width: post media comes in
+   every shape, and only a height keeps a portrait clip and a landscape one both
+   to a size that reads as part of the note. Left-aligned rather than stretched,
+   so a narrow clip is a card in the note and not a column of empty space. The
+   height comes from settings, set on the embed as --pa-post-media-h. */
+/* Both element classes are named so the rule out-ranks Obsidian's own
+   `.internal-embed.media-embed video { width: 100% }`, which a single-class
+   selector only ties with. object-fit is the belt: if a width ever does win,
+   the picture letterboxes rather than stretching. */
+.internal-embed.media-embed.pa-post-media video,
+.internal-embed.image-embed.pa-post-media img,
+.internal-embed.pa-post-media video,
+.internal-embed.pa-post-media img {
+	max-height: var(--pa-post-media-h, 360px);
+	max-width: 100%;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+	border-radius: 8px;
+}
+
+/* inline-block so the box shrink-wraps the picture: the handle hangs off the
+   embed's corner, which has to be the picture's corner and not the note's.
+   Both element classes are named to out-rank core, and `showPostMedia` sets the
+   same three properties inline as well, because losing this one silently moves
+   the handle rather than merely restyling it. */
+.internal-embed.media-embed.pa-post-media,
+.internal-embed.image-embed.pa-post-media,
+.internal-embed.pa-post-media {
+	position: relative;
+	display: inline-block;
+	line-height: 0;
+}
+
+/* The corner Obsidian gives an image and withholds from a video. Hidden until
+   the picture is hovered, like the native one, so a note being read is a note
+   and not a set of controls. */
+/* Faint rather than invisible. Obsidian's own image handle appears only on
+   hover, which is fine for a control people already know is there; this one is
+   new, and a control nobody can find is a control that does not exist. */
+.pa-resize-handle {
+	position: absolute;
+	right: 6px;
+	bottom: 6px;
+	width: 18px;
+	height: 18px;
+	z-index: 5;
+	cursor: nwse-resize;
+	opacity: 0.55;
+	border-radius: 3px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: var(--shadow-s);
+	transition: opacity 120ms ease;
+}
+
+/* the two lines of a resize grip */
+.pa-resize-handle::after {
+	content: "";
+	position: absolute;
+	inset: 3px;
+	border-right: 2px solid var(--text-muted);
+	border-bottom: 2px solid var(--text-muted);
+}
+
+.internal-embed.pa-post-media:hover .pa-resize-handle,
+.pa-resize-handle:hover,
+.pa-resize-handle:focus-visible {
+	opacity: 1;
+}
+
+/* :not(.pa-post-media) because a captured post's own clip is not the recording
+   this bar plays, and hiding it leaves a Media heading with nothing under it. */
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".webm" i],
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".m4a" i],
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".mp3" i],
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".wav" i],
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".ogg" i],
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".flac" i],
+.pa-has-player .internal-embed.media-embed:not(.pa-post-media)[src$=".mp4" i] {
 	display: none;
 }
 
