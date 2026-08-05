@@ -323,6 +323,8 @@ import {
 	embedSrcMatches,
 	planGifFrames,
 	gifSize,
+	ytDlpAudioAndInfoArgs,
+	parseAudioAndInfo,
 	hasWordsToExtract,
 	postWords,
 	dayOf,
@@ -334,7 +336,6 @@ import {
 	statSummary,
 	ytDlpInvocations,
 	ytDlpInfoArgs,
-	ytDlpAudioArgs,
 	ytDlpSubsArgs,
 	cookieArgs,
 	hasYoutubeLogin,
@@ -704,6 +705,10 @@ interface PowerAssistantSettings {
 	mediaFilename: string;
 	/** Which sections they extract (content-oriented by default). */
 	mediaExtractions: Record<ExtractionKey, boolean>;
+	/** When a post's video is transcribed. Transcribing costs a download and an
+	 *  API call, and on a post that already says what it means in words it
+	 *  routinely buys nothing: the audio under a meme is music. */
+	mediaTranscribe: "always" | "wordless" | "never";
 	/** Save a post's pictures, GIFs and videos into the vault and embed them.
 	 *  A post is frequently nothing but its picture, and the alternative to
 	 *  keeping a copy is a note that describes something it cannot show. */
@@ -871,6 +876,12 @@ const DEFAULT_SETTINGS: PowerAssistantSettings = {
 	mediaFolder: "Sources/Social/{{site}}",
 	mediaFilename: "{{date}} {{title}}",
 	mediaExtractions: { summary: true, takeaways: true, facts: true, resources: true, quotes: true, questions: true, keywords: true, actions: false, decisions: false, risks: false },
+	// "A post is its words; the audio is a bonus" is what this file already says
+	// about a capture, and the default now follows it: when the post has said
+	// something in words, its video is not transcribed. That is the difference
+	// between a capture that waits on a download and an API call and one that
+	// does not, and on the posts it skips the transcript came back empty anyway.
+	mediaTranscribe: "wordless",
 	savePostMedia: true,
 	// generous enough for a phone clip, short of the size where a vault starts
 	// paying for a capture in sync time
@@ -7399,15 +7410,29 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  from an absence. Every argument is built by the `ytDlp*Args` functions in
 	 *  pipeline.ts, where the URL is checked for an http(s) scheme before it can
 	 *  become an argument at all. */
+	/** The way of invoking yt-dlp that worked last, so the next call starts there
+	 *  rather than re-failing its way down the list. Not persisted: it costs one
+	 *  spawn to rediscover, and a remembered path that has moved would be worse
+	 *  than not remembering. */
+	private ytDlpWorking: { cmd: string; pre: string[] } | null = null;
+
 	private runYtDlp(args: string[], timeoutMs: number): Promise<string> {
 		const cp = this.nodeCp();
 		if (!cp) return Promise.reject(new Error("capturing an X post needs the desktop app."));
-		const tries = ytDlpInvocations(this.settings.ytDlpPath);
+		const all = ytDlpInvocations(this.settings.ytDlpPath);
+		// the one that answered last time first, so a machine where the launcher is
+		// off PATH stops paying for a failed spawn on every single call. Only a
+		// reordering: if the remembered one has since gone, the rest still get their
+		// turn below.
+		const tries = this.ytDlpWorking ? [this.ytDlpWorking, ...all.filter((t) => t !== this.ytDlpWorking)] : all;
 		const attempt = (i: number): Promise<string> =>
 			new Promise<string>((resolve, reject) => {
 				const t = tries[i];
 				cp.execFile(t.cmd, [...t.pre, ...args], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, shell: false }, (err, stdout, stderr) => {
-					if (!err) return resolve(stdout);
+					if (!err) {
+						this.ytDlpWorking = t;
+						return resolve(stdout);
+					}
 					// A missing binary (ENOENT) or a Python without the module means
 					// only that this particular way of calling yt-dlp is not the one;
 					// any other failure came from yt-dlp itself and is worth showing.
@@ -7697,8 +7722,14 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (isXUrl(url)) read = await this.readTweetText(url);
 		const media = this.settings.savePostMedia ? (read?.media ?? []) : [];
 		if (media.length) return { media, read };
+		return { media: this.thumbnailMedia(dump), read };
+	}
+
+	/** The still yt-dlp reports, as the one picture a site with no reader of its
+	 *  own contributes. */
+	private thumbnailMedia(dump: MediaDump | null): PostMedia[] {
 		const thumb = this.settings.savePostMedia ? (dump?.thumbnail ?? "").trim() : "";
-		return { media: thumb ? [{ kind: "photo", url: thumb }] : [], read };
+		return thumb ? [{ kind: "photo", url: thumb }] : [];
 	}
 
 	/** A video's title and caption text, read by yt-dlp rather than by asking
@@ -7776,7 +7807,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  would race the auto-processor. The bytes are then handed to the vault the
 	 *  same way a YouTube capture hands over what it downloaded, which keeps both
 	 *  on one transcription path. */
-	private async transcribeMediaAudio(url: string, provider: TranscriptionProvider): Promise<string | null> {
+	private async transcribeMediaAudio(downloaded: string | null, provider: TranscriptionProvider): Promise<string | null> {
 		const fs = this.nodeFs();
 		const os = this.nodeOs();
 		if (!fs || !os) {
@@ -7784,13 +7815,9 @@ export default class PowerAssistantPlugin extends Plugin {
 			return null;
 		}
 		const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		let downloaded: string | null = null;
 		let tmp: TFile | null = null;
 		let tmpPath = "";
 		try {
-			new Notice("Power Assistant: downloading the audio…");
-			const printed = await this.runYtDlp(ytDlpAudioArgs(url, `${os.tmpdir()}/pa-x-${stamp}.%(ext)s`, this.settings.cookieBrowser, this.settings.cookieFile), 15 * 60_000);
-			downloaded = printed.trim().split("\n").filter(Boolean).pop() ?? null;
 			if (!downloaded || !fs.existsSync(downloaded)) {
 				new Notice("Power Assistant: yt-dlp reported no audio file for that post.");
 				return null;
@@ -7996,13 +8023,34 @@ export default class PowerAssistantPlugin extends Plugin {
 			// meme, a chart, a clip. Read here and downloaded further down, once the
 			// note it belongs beside is known to be one worth writing
 			let media: PostMedia[] = [];
+			// the audio yt-dlp fetched on the way past, ready to transcribe without
+			// a second call
+			let audioPath: string | null = null;
 			try {
-				const out = await this.runYtDlp(ytDlpInfoArgs(url, s.cookieBrowser, s.cookieFile), 90_000);
-				const dump = JSON.parse(out.trim().split("\n")[0] || "{}") as MediaDump;
+				const os = this.nodeOs();
+				const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+				// ONE call that describes the post and downloads its audio. Two calls
+				// paid the cost of starting the program twice, which on a machine where
+				// the launcher is off PATH means Python's startup twice: measured at 3.1
+				// seconds for the pair against 2.3 for this. X's own read runs alongside
+				// it rather than after it, since neither waits on the other.
+				// nothing is ever transcribed here, so nothing needs downloading: the
+				// run only has to describe the post
+				const describeOnly = s.mediaTranscribe === "never" || !os;
+				const [printed, post] = await Promise.all([
+					describeOnly
+						? this.runYtDlp(ytDlpInfoArgs(url, s.cookieBrowser, s.cookieFile), 90_000)
+						: this.runYtDlp(ytDlpAudioAndInfoArgs(url, `${os!.tmpdir()}/pa-x-${stamp}.%(ext)s`, s.cookieBrowser, s.cookieFile), 15 * 60_000),
+					this.readPostMedia(url, null),
+				]);
+				const read = describeOnly ? { path: null, dump: JSON.parse(printed.trim().split("\n")[0] || "{}") as MediaDump } : parseAudioAndInfo(printed);
+				audioPath = read.path;
+				const dump = read.dump ?? ({} as MediaDump);
 				info = parseMediaInfo(dump, site?.label);
 				postText = (dump.description ?? "").trim();
-				const post = await this.readPostMedia(url, dump);
-				media = post.media;
+				// the thumbnail is the fallback for a site X's reader knows nothing
+				// about, and is only needed when that read came back empty
+				media = post.media.length ? post.media : this.thumbnailMedia(dump);
 				// X's own read of the post beats yt-dlp's description of it: it names
 				// the t.co links X appended for the post's own media, so they come out
 				// instead of trailing the words, and it carries the quoted or
@@ -8037,9 +8085,16 @@ export default class PowerAssistantPlugin extends Plugin {
 				if (s.savePostMedia) media = read.media ?? [];
 			}
 
-			// only matters when there is audio: a text post costs no transcription
+			// the post's own words settle whether its video is worth transcribing:
+			// when it has some, the audio under it is a reaction clip or music, and
+			// paying a download and an API call to find that out again is the
+			// slowest part of a capture
+			const worthTranscribing = s.mediaTranscribe === "always" || (s.mediaTranscribe === "wordless" && !postWords(postText));
+
+			// only asked for when it is actually going to be used: a capture that
+			// transcribes nothing has no business demanding a transcription key
 			const provider = this.providerFor("media");
-			if (hasAudio && !this.providerReady(provider)) {
+			if (hasAudio && worthTranscribing && !this.providerReady(provider)) {
 				new Notice(`Power Assistant: set the ${provider} API key in settings before capturing a video or post.`, 10000);
 				return;
 			}
@@ -8075,11 +8130,24 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 			const notePath = where.path;
 
+			// the note's own name, so the attachments sort beside it in a folder that
+			// holds the media of many captures
+			const noteBase = (notePath.split("/").pop() ?? "").replace(/\.md$/i, "");
+			// started now and awaited later: the pictures come from a different server
+			// than the transcript does, and neither is waiting on the other
+			const mediaSaving = media.length ? this.downloadPostMedia(media, noteBase, notePath) : Promise.resolve<string[]>([]);
+
 			let text = postText;
 			let spoken = false;
-			if (hasAudio) {
-				const transcript = await this.transcribeMediaAudio(url, provider);
-				if (transcript === null) return; // a real failure, already reported
+			if (hasAudio && worthTranscribing) {
+				new Notice("Power Assistant: transcribing the audio…");
+				const transcript = await this.transcribeMediaAudio(audioPath, provider);
+				if (transcript === null) {
+					// the pictures were already on their way; keep them rather than
+					// leaving half a download behind
+					await mediaSaving.catch(() => []);
+					return; // a real failure, already reported
+				}
 				if (transcript) {
 					text = transcript;
 					spoken = true;
@@ -8087,6 +8155,14 @@ export default class PowerAssistantPlugin extends Plugin {
 					// a clip with no speech (a reaction video, music over a still) is
 					// ordinary, not a failure, and the post's own words are still the point
 					new Notice("Power Assistant: no speech in that video, so the post's own text was saved instead.", 10000);
+				}
+			} else if (audioPath) {
+				// downloaded on the way past and not wanted after all: the run that
+				// described the post fetched it before the post's words were known
+				try {
+					this.nodeFs()?.unlinkSync(audioPath);
+				} catch {
+					/* already gone */
 				}
 			}
 			// X appends a t.co link to the text of every post carrying media, so a
@@ -8100,10 +8176,8 @@ export default class PowerAssistantPlugin extends Plugin {
 				new Notice("Power Assistant: that post has no speech and no text, so there is nothing to capture.", 10000);
 				return;
 			}
-			// the note's own name, so the attachments sort beside it in a folder that
-			// holds the media of many captures
-			const noteBase = (notePath.split("/").pop() ?? "").replace(/\.md$/i, "");
-			const mediaLinks = media.length ? await this.downloadPostMedia(media, noteBase, notePath) : [];
+			// by now this has usually finished alongside the transcription
+			const mediaLinks = await mediaSaving;
 			await this.writeCapture({
 				url,
 				title: info.title,
@@ -15042,6 +15116,21 @@ class AssistantSettingTab extends PluginSettingTab {
 						help: "The name pattern for a captured video or post. {{title}} is the post's own text trimmed to fit a filename, {{date}} is today, and {{site}} is the source. Add an extension or it defaults to .md.",
 						build: (st) => {
 							st.addText((t) => t.setPlaceholder("{{date}} {{title}}").setValue(s.mediaFilename).onChange((v) => ((s.mediaFilename = v || "{{date}} {{title}}"), save())));
+						},
+					},
+					{
+						name: "Transcribe a post's video",
+						desc: "Transcribing costs a download and an API call. On a post that already says what it means in words, that usually buys nothing: the audio under a meme is music.",
+						help: "The slowest part of capturing a post is transcribing its video, and on most posts it adds nothing, because the words are in the post and the audio is a reaction clip or a music bed. \"Only when the post has no words of its own\" is the default: a wordless video post still gets transcribed, since its audio is the only thing to capture, and one with a caption is taken at its word. \"Always\" is the old behaviour, right if you capture talking-head clips whose captions do not say much. \"Never\" also skips the download, which makes a capture as fast as it can be.",
+						build: (st) => {
+							st.addDropdown((d) =>
+								d
+									.addOption("wordless", "Only when the post has no words of its own")
+									.addOption("always", "Always")
+									.addOption("never", "Never")
+									.setValue(s.mediaTranscribe)
+									.onChange((v) => ((s.mediaTranscribe = v as PowerAssistantSettings["mediaTranscribe"]), save()))
+							);
 						},
 					},
 					{
