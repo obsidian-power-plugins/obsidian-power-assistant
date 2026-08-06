@@ -1184,7 +1184,10 @@ export default class PowerAssistantPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
-			id: "capture-youtube", icon: "youtube",
+			// not "youtube": Obsidian 1.13 dropped the brand icons, and an icon it
+			// does not have draws an empty slot rather than failing. square-play is
+			// the same silhouette without the mark
+			id: "capture-youtube", icon: "square-play",
 			name: "Capture a YouTube video…",
 			callback: () => new YoutubeModal(this.app, this).open(),
 		});
