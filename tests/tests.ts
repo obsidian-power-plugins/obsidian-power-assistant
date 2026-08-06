@@ -2896,7 +2896,7 @@ eq(parseCaptureForExport("# Empty\n## Summary\n*None identified.*").sections.len
 import { allTemplates, cleanFolderPath, redact, redactionActive, resolveRecordingFolder } from "../src/pipeline";
 
 // --- meeting notes ---
-import { DEFAULT_MEETING_TEMPLATE, LEGACY_MEETING_TEMPLATES, templateBodyOf, buildMeetingStub, isCaptureNote, mergeMeetingCapture, parseMeetingMeta, personLink, personName, renderMeetingFilename, renderMeetingTemplate } from "../src/pipeline";
+import { DEFAULT_MEETING_TEMPLATE, LEGACY_MEETING_TEMPLATES, templateBodyOf, buildMeetingStub, isCaptureNote, mergeMeetingCapture, parseMeetingMeta, personLink, personName, renderMeetingFilename, renderMeetingTemplate, scalarText } from "../src/pipeline";
 
 eq(renderMeetingFilename("{{date}} {{title}}", "Budget Review", "2026-07-14"), "2026-07-14 Budget Review.md", "meeting filename from date + title");
 eq(renderMeetingFilename("", "", "2026-07-14"), "2026-07-14 Meeting.md", "empty title falls back to Meeting; default pattern");
@@ -2955,6 +2955,19 @@ eq(renderMeetingFilename("{{title}}", "a/b: c", "d"), "a-b- c.md", "unsafe filen
 	const none = parseMeetingMeta("# Bare note\n\nhi");
 	eq(none.attendees.length, 0, "a note without frontmatter yields no attendees");
 	eq(none.title, "Bare note", "title still found without frontmatter");
+}
+{
+	// Frontmatter is whatever a person typed, so every reader of it has to cope
+	// with a property that is not the kind of thing it looks like
+	eq(scalarText("2026-07-15"), "2026-07-15", "a string is itself");
+	eq(scalarText(42), "42", "a number reads as its digits");
+	eq(scalarText(false), "false", "and a boolean as its word");
+	eq(scalarText(null), "", "a missing property is empty, not the word null");
+	eq(scalarText(undefined), "", "and so is one that was never there");
+	eq(scalarText({ when: "today" }), "", "a map reads as nothing rather than [object Object]");
+	eq(scalarText(["a", "b"]), "", "and so does a list, which is not this text either");
+	eq(scalarText(new Date("2026-07-15T00:00:00Z")).slice(0, 10), "2026-07-15", "a parsed date still slices to the day it names");
+	eq(personName({ name: "Jane" } as unknown), "", "a person property that is a map names nobody");
 }
 {
 	// People-folder linking: attendee links are qualified and aliased so a click

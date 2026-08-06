@@ -1110,7 +1110,9 @@ export function parseCategorized(reply: string, count: number): string[] {
 	}
 	for (const [k, v] of Object.entries(j)) {
 		const i = parseInt(k, 10) - 1;
-		const cat = String(v ?? "").toLowerCase().trim();
+		// a category is a word or it is nothing: a nested object stringifies to
+		// "[object Object]", which no category list will ever contain
+		const cat = (typeof v === "string" ? v : "").toLowerCase().trim();
 		if (i >= 0 && i < count && (TXN_CATEGORIES as readonly string[]).includes(cat)) out[i] = cat;
 	}
 	return out;

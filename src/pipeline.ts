@@ -93,11 +93,26 @@ export function personLink(name: string, folder?: string | null): string {
 	return f ? `[[${f}/${name}|${name}]]` : `[[${name}]]`;
 }
 
+/** The text of a value this plugin did not create: a frontmatter property,
+ *  which a person can type anything into, or a field off a JSON frame. A YAML
+ *  map or list is not text, and stringifying one lands "[object Object]" in a
+ *  note looking like data when it is really a mistyped property, so anything
+ *  that is not a single value reads as nothing at all. */
+export function scalarText(v: unknown): string {
+	if (v == null) return "";
+	if (typeof v === "string") return v;
+	if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+	// a date property arrives already parsed. Its ISO form is the one the rest
+	// of this file slices and compares, not "Wed Jul 15 2026 00:00:00 GMT-0500"
+	if (v instanceof Date) return v.toISOString();
+	return "";
+}
+
 /** The display name of a person value: unwraps quotes and [[wiki-links]],
  *  preferring the link's alias, else the basename of its target. Accepts both
  *  the old bare "[[Jane Doe]]" and the folder-qualified form. */
 export function personName(v: unknown): string {
-	const s = String(v ?? "").trim().replace(/^["']|["']$/g, "").trim();
+	const s = scalarText(v).trim().replace(/^["']|["']$/g, "").trim();
 	const m = s.match(/^\[\[([^\]]+)\]\]$/);
 	if (!m) return s;
 	const inner = m[1];
@@ -1440,8 +1455,8 @@ export function statUpdates(current: Record<string, unknown> | null | undefined,
 	] as const) {
 		if (typeof n !== "number") continue;
 		const to = n.toLocaleString("en-US");
-		const raw = current?.[key];
-		const from = raw == null || raw === "" ? null : String(raw);
+		const raw = scalarText(current?.[key]);
+		const from = raw === "" ? null : raw;
 		if (from !== to) out.push({ key, from, to });
 	}
 	return out;
@@ -5518,7 +5533,7 @@ export function isRetryableError(e: unknown): boolean {
 	const err = e as { status?: unknown; message?: unknown } | null;
 	let status: number | null = typeof err?.status === "number" ? err.status : null;
 	if (status == null) {
-		const m = String(err?.message ?? "").match(/status[":\s]+(\d{3})/i);
+		const m = scalarText(err?.message).match(/status[":\s]+(\d{3})/i);
 		status = m ? Number(m[1]) : null;
 	}
 	return status != null && isRetryableStatus(status);
