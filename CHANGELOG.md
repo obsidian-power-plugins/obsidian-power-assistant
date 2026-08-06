@@ -2,7 +2,16 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
-## 1.92.0
+## 1.92.1
+
+### Fixed
+
+- **A picture's size is the stylesheet's to describe again.** Dragging a captured post's picture wrote the released height cap straight onto the element, which meant a theme had no say in what a sized picture looks like, and the reviewers' own checks say so. The cap now lifts through a class, so the rule lives in `styles.css` where it can be read and overridden.
+- **A frontmatter property that is a list or a map no longer reads as `[object Object]`.** Frontmatter is whatever the note says, so a date, a location, or a vendor can arrive as something other than the single value it looks like. Every reader of one now treats anything that is not a single value as nothing at all, rather than writing that placeholder into a briefing or a digest. A date property that arrives already parsed now yields the day it names, where it used to yield `Wed Jul 15 2026` and get sliced into nonsense.
+
+### Internal
+
+- The lockfile a fresh checkout installs from now carries every dependency the build needs, which is what the community submission checks first. Without it the install stops, nothing else can be checked, and the whole source read comes back as noise about types it could not resolve.
 
 ### Changed
 
