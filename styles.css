@@ -382,6 +382,20 @@
 	border-radius: 8px;
 }
 
+/* A picture somebody has sized, by dragging its corner or by a width already
+   written into the note. The width is the more specific answer, so the height
+   cap above stops applying to that one picture: a cap that wins here turns a
+   width somebody chose into a picture that is merely smaller. Named on both
+   element classes for the same reason the rule above is, and one class deeper
+   so it out-ranks it. */
+.internal-embed.media-embed.pa-post-media video.pa-post-media-sized,
+.internal-embed.image-embed.pa-post-media img.pa-post-media-sized,
+.internal-embed.pa-post-media video.pa-post-media-sized,
+.internal-embed.pa-post-media img.pa-post-media-sized {
+	max-height: none;
+	height: auto;
+}
+
 /* inline-block so the box shrink-wraps the picture: the handle hangs off the
    embed's corner, which has to be the picture's corner and not the note's.
    Both element classes are named to out-rank core, and `showPostMedia` sets the
