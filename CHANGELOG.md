@@ -2,7 +2,12 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
-## 1.92.1
+## 1.92.2
+
+### Fixed
+
+- **Capture a YouTube video has its icon back.** The row sat blank in the launcher and beside the command anywhere else it appears. Obsidian 1.13 dropped the brand icons it used to carry, `youtube` among eighteen of them, and an icon Obsidian does not have draws an empty slot rather than complaining, so nothing said why. The command now uses `square-play`, which is the same silhouette without the mark.
+- **The check that is supposed to catch exactly that was looking at the wrong Obsidian.** It read the copy under Program Files, but Obsidian updates itself without touching the installer: it downloads a new version into your config folder and runs that instead. So the check was passing against 1.12.7 while the icon was missing on the 1.13.4 that was actually running. It now reads the newest downloaded version and falls back to the installer, and it catches this on its own.
 
 ### Fixed
 
