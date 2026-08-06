@@ -436,6 +436,7 @@ import {
 	absoluteEdited,
 	editedAt,
 	relativeEdited,
+	scalarText,
 	youtubeVideoId,
 } from "./pipeline";
 import type { SpendItem, TxnMail, TxnOrder, TxnRule } from "./transactions";
@@ -4387,7 +4388,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const d: DigestData = { from, to, meetings: [], decisions: [], newTasks: [], completed: [], stale: [], questions: [] };
 		await this.eachCapture((f, fm, md, date) => {
 			if (date >= from && date <= to) {
-				d.meetings.push({ title: f.basename, path: f.path, date, series: fm.series ? String(fm.series) : null });
+				d.meetings.push({ title: f.basename, path: f.path, date, series: scalarText(fm.series) || null });
 				for (const x of this.sectionItems(md, "Decisions")) d.decisions.push({ text: x, fromPath: f.path });
 				for (const x of this.sectionItems(md, "Questions")) d.questions.push({ text: x, fromPath: f.path });
 				for (const t of extractOpenTasks(md)) d.newTasks.push({ owner: taskOwner(t), text: t, fromPath: f.path, done: false });
@@ -4455,13 +4456,13 @@ export default class PowerAssistantPlugin extends Plugin {
 		await this.eachCapture((f, fm, md, date, attendees) => {
 			if (date === today && (fm.time || Array.isArray(fm.attendees))) {
 				d.meetings.push({
-					time: String(fm.time ?? ""),
+					time: scalarText(fm.time),
 					title: f.basename,
 					path: f.path,
 					join: null,
 					attendees: attendees.length ? attendees : undefined,
 					agenda: sectionText(md, "Agenda") || undefined,
-					location: fm.location ? String(fm.location) : undefined,
+					location: scalarText(fm.location) || undefined,
 				});
 				seenMeeting.add(f.basename.toLowerCase());
 			}
@@ -4481,10 +4482,12 @@ export default class PowerAssistantPlugin extends Plugin {
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as { type?: unknown; due?: unknown; amount?: unknown; currency?: unknown; vendor?: unknown } | undefined;
 			if (fm?.type !== "capture-doc") continue;
-			const due = String(fm.due ?? "");
+			const due = scalarText(fm.due);
 			if (!/^\d{4}-\d{2}-\d{2}$/.test(due) || due > horizon) continue;
-			const amount = fm.amount != null ? `${fm.currency ? String(fm.currency) + " " : ""}${fm.amount}` : "";
-			d.dueDocs.push({ title: fm.vendor ? String(fm.vendor) : f.basename, amount, due, path: f.path, overdue: due < today });
+			const sum = scalarText(fm.amount);
+			const currency = scalarText(fm.currency);
+			const amount = sum ? `${currency ? currency + " " : ""}${sum}` : "";
+			d.dueDocs.push({ title: scalarText(fm.vendor) || f.basename, amount, due, path: f.path, overdue: due < today });
 		}
 		// enrich with the live calendar when connected: real times, join links,
 		// and meetings not yet prepped as notes
@@ -4699,7 +4702,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as { type?: unknown; "conversation-id"?: unknown } | undefined;
 			if (fm?.type !== "capture-mail") continue;
-			const id = String(fm["conversation-id"] ?? "").trim();
+			const id = scalarText(fm["conversation-id"]).trim();
 			if (id) out.set(id, f);
 		}
 		return out;
@@ -4939,7 +4942,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		for (const f of this.app.vault.getMarkdownFiles()) {
 			const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as { type?: unknown; "order-id"?: unknown } | undefined;
 			if (fm?.type !== "capture-txn-order") continue;
-			const id = String(fm["order-id"] ?? "").trim();
+			const id = scalarText(fm["order-id"]).trim();
 			if (id) out.add(id);
 		}
 		return out;
@@ -6306,7 +6309,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				| undefined;
 			if (!isCaptureNote(fm)) continue;
 			if ((fm?.series ?? seriesKey(f.basename)) !== key) continue;
-			const date = String(fm?.date ?? "").slice(0, 10) || dayOf(new Date(f.stat.ctime));
+			const date = scalarText(fm?.date).slice(0, 10) || dayOf(new Date(f.stat.ctime));
 			if (date >= beforeDate) continue;
 			if (!best || date > bestDate) {
 				best = f;
@@ -6445,7 +6448,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const transcript = captureSourceText(md);
 		if (!transcript) return "no-text";
 		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as { date?: unknown; "pa-screens"?: unknown } | undefined;
-		const meetingDate = String(fm?.date ?? "").slice(0, 10) || today();
+		const meetingDate = scalarText(fm?.date).slice(0, 10) || today();
 		const body = await withRetry(() =>
 			this.extract(transcript, chosen, { actionsAsTasks: this.settings.actionsAsTasks, meetingDate })
 		);
@@ -6496,7 +6499,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		const sitting = at(base);
 		if (sitting instanceof TFile) {
 			const fm = this.app.metadataCache.getFileCache(sitting)?.frontmatter as { source?: unknown } | undefined;
-			const src = String(fm?.source ?? "").trim();
+			const src = scalarText(fm?.source).trim();
 			if (src && sameCaptureSource(src, url)) return { duplicate: sitting };
 		}
 		return { path: normalizePath(`${folder}/${freeNoteName(base, (name) => !!at(name))}`) };
@@ -8040,12 +8043,12 @@ export default class PowerAssistantPlugin extends Plugin {
 				const [printed, post] = await Promise.all([
 					describeOnly
 						? this.runYtDlp(ytDlpInfoArgs(url, s.cookieBrowser, s.cookieFile), 90_000)
-						: this.runYtDlp(ytDlpAudioAndInfoArgs(url, `${os!.tmpdir()}/pa-x-${stamp}.%(ext)s`, s.cookieBrowser, s.cookieFile), 15 * 60_000),
+						: this.runYtDlp(ytDlpAudioAndInfoArgs(url, `${os.tmpdir()}/pa-x-${stamp}.%(ext)s`, s.cookieBrowser, s.cookieFile), 15 * 60_000),
 					this.readPostMedia(url, null),
 				]);
 				const read = describeOnly ? { path: null, dump: JSON.parse(printed.trim().split("\n")[0] || "{}") as MediaDump } : parseAudioAndInfo(printed);
 				audioPath = read.path;
-				const dump = read.dump ?? ({} as MediaDump);
+				const dump: MediaDump = read.dump ?? {};
 				info = parseMediaInfo(dump, site?.label);
 				postText = (dump.description ?? "").trim();
 				// the thumbnail is the fallback for a site X's reader knows nothing
@@ -8614,7 +8617,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				const fm = this.app.metadataCache.getFileCache(af)?.frontmatter as { date?: unknown; attendees?: unknown } | undefined;
 				if (!fm) return null;
 				return {
-					date: String(fm.date ?? "").slice(0, 10) || undefined,
+					date: scalarText(fm.date).slice(0, 10) || undefined,
 					attendees: Array.isArray(fm.attendees) ? (fm.attendees as unknown[]).map(personName) : undefined,
 				};
 			},
@@ -10548,6 +10551,19 @@ function setStyle(el: HTMLElement, prop: string, value: string) {
 	if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value);
 }
 
+/** Marks a picture whose width somebody chose, so the stylesheet can lift the
+ *  height cap from settings for that one picture. A class rather than an inline
+ *  `max-height: none`, because what a sized picture looks like is the
+ *  stylesheet's to say, and a theme should be able to answer it. */
+const POST_MEDIA_SIZED = "pa-post-media-sized";
+
+/** Written only when it changes, for the reason `setStyle` is: a class the
+ *  editor watches change is a block CodeMirror may decide to re-render, and a
+ *  re-render mid-drag is what strands a playing clip. */
+function sizedByWidth(media: HTMLElement, on: boolean) {
+	if (media.hasClass(POST_MEDIA_SIZED) !== on) media.toggleClass(POST_MEDIA_SIZED, on);
+}
+
 /** A corner to drag, for the embeds Obsidian does not give one to.
  *
  *  Obsidian resizes an image embed by dragging and writes the result into the
@@ -10592,9 +10608,11 @@ function mountResizeHandle(embed: HTMLElement, link: string, onResize: (link: st
 		if (!dragging || !media) return;
 		asked = Math.max(POST_MEDIA_MIN_W, Math.round(startW + (e.clientX - startX)));
 		media.style.width = `${asked}px`;
-		// the width is now in charge; the height cap would otherwise fight it
-		media.style.maxHeight = "none";
-		media.style.height = "auto";
+		// the width is now in charge: the class lifts the height cap that would
+		// otherwise fight it, and a height this note saved earlier goes back to the
+		// stylesheet rather than pinning the picture to a shape nobody is dragging
+		sizedByWidth(media, true);
+		if (media.style.height) media.style.removeProperty("height");
 		// a real drag is never the first half of a double-press
 		if (Math.abs(e.clientX - startX) > 3) lastPress = 0;
 		e.preventDefault();
@@ -10689,12 +10707,15 @@ function showPostMedia(root: HTMLElement, refs: EmbedRef[], maxHeight: number, o
 				const size = parseEmbedSize(ref.size);
 				if (size) {
 					setStyle(media, "width", `${size.width}px`);
-					setStyle(media, "max-height", "none");
-					setStyle(media, "height", size.height ? `${size.height}px` : "auto");
-				} else if (media.style.width || media.style.height || media.style.maxHeight) {
+					sizedByWidth(media, true);
+					if (size.height) setStyle(media, "height", `${size.height}px`);
+					else if (media.style.height) media.style.removeProperty("height");
+				} else if (media.style.width || media.style.height || media.hasClass(POST_MEDIA_SIZED)) {
 					media.style.removeProperty("width");
 					media.style.removeProperty("height");
+					// left behind by a build that wrote the cap inline
 					media.style.removeProperty("max-height");
+					sizedByWidth(media, false);
 				}
 			}
 			mountResizeHandle(embed, ref.link, onResize);
@@ -12317,11 +12338,11 @@ class LiveSession {
 				const j = JSON.parse(String(ev.data)) as Record<string, unknown>;
 				if (j.type === "Turn") {
 					// v3 shape
-					const t = String(j.transcript ?? "");
+					const t = scalarText(j.transcript);
 					if (j.end_of_turn) this.view?.addTurn(t);
 					else this.view?.setPartial(t);
-				} else if (j.message_type === "FinalTranscript") this.view?.addTurn(String(j.text ?? ""));
-				else if (j.message_type === "PartialTranscript") this.view?.setPartial(String(j.text ?? ""));
+				} else if (j.message_type === "FinalTranscript") this.view?.addTurn(scalarText(j.text));
+				else if (j.message_type === "PartialTranscript") this.view?.setPartial(scalarText(j.text));
 			} catch {
 				/* non-JSON frame: ignore */
 			}
