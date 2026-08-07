@@ -1,6 +1,6 @@
 {
 	"name": "powerassistant",
-	"version": "1.92.2",
+	"version": "1.92.3",
 	"description": "Obsidian plugin: record and summarize meetings, import your calendar, track commitments, and ask your notes anything",
 	"main": "main.js",
 	"type": "module",
