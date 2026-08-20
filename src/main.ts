@@ -8068,7 +8068,14 @@ export default class PowerAssistantPlugin extends Plugin {
 				// and the words come from elsewhere, so this joins the "nothing to play"
 				// route rather than ending a capture that never needed the program.
 				const absent = e instanceof YtDlpMissing;
-				if (!absent && !NO_MEDIA_RE.test(msg)) {
+				// An X post is the one site here whose words come from a reader that
+				// needs no yt-dlp at all, so they survive any yt-dlp trouble: a missing
+				// program, or a real error like a link shape its extractor will not take
+				// (a bare x.com/<id> with no /status/ falls to yt-dlp's generic reader,
+				// which fetches the page and is handed a 404). Both drop to X's own
+				// reader below. Every other site has no such reader, so a genuine error
+				// there, as against a plain "no media here", is still surfaced.
+				if (!absent && !NO_MEDIA_RE.test(msg) && site?.id !== "x") {
 					new Notice("Power Assistant: could not read that link. " + msg, 12000);
 					return;
 				}
@@ -8076,6 +8083,18 @@ export default class PowerAssistantPlugin extends Plugin {
 				ytDlpAbsent = absent;
 				const read = site?.id === "x" ? await this.readTweetText(url) : null;
 				if (!read) {
+					// An X status its reader cannot read is not an article behind a
+					// login: x.com serves a logged-out visitor its own "this page does
+					// not exist" shell, so reading it as a web page would file that
+					// shell, not the post. When the link is a status (it carries an id)
+					// yet no reader could read it, the post is gone: deleted, its
+					// account suspended, or the link missing the part that named it. Say
+					// so, rather than save the shell. A URL that is not a status (a
+					// profile, an x.com help page) has no id and still falls through.
+					if (site?.id === "x" && xStatusId(url)) {
+						new Notice("Power Assistant: that post could not be read. It may have been deleted, its account may be suspended, or the link may be incomplete.", 15000);
+						return;
+					}
 					// Every other site: hand it to the page reader, which is what a link
 					// with nothing to play usually wanted anyway.
 					new Notice(absent ? "Power Assistant: yt-dlp is not installed, so reading it as a page instead…" : "Power Assistant: nothing to play there, reading it as a page instead…", 8000);
