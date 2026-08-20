@@ -1306,11 +1306,22 @@ export interface MediaInfo {
 
 /** The status id in an X post URL, or null when it is not one. Covers the x.com
  *  and legacy twitter.com hosts, the mobile and www subdomains, the /i/web/
- *  share form, the older /statuses/ path, and the /photo/1 and /video/1
- *  suffixes that a click-through appends. */
+ *  share form, the older /statuses/ path, the /photo/1 and /video/1 suffixes
+ *  that a click-through appends, and the bare-id form the domain is left with
+ *  when a share drops the rest of the path. */
 export function xStatusId(url: string): string | null {
 	const m = url.match(/^https?:\/\/(?:[\w-]+\.)*(?:twitter\.com|x\.com)\/(?:i\/web\/|[^/]+\/)?status(?:es)?\/(\d+)/i);
-	return m ? m[1] : null;
+	if (m) return m[1];
+	// The bare-id form, x.com/2089950222248226816, with no /status/ and no
+	// handle. It reaches the plugin from a share that dropped the rest of the
+	// path, and X resolves the post from the id alone, as does its reader. yt-dlp
+	// does not: the id has to sit under /status/ for its extractor to take it, so
+	// without this the link falls to yt-dlp's generic reader, which fetches
+	// x.com/<id> and is handed a 404. Only a long run of digits qualifies: a
+	// status id is an 18-to-19-digit snowflake where a handle is at most 15
+	// characters, so 15 or more digits cannot be a profile name.
+	const bare = url.match(/^https?:\/\/(?:[\w-]+\.)*(?:twitter\.com|x\.com)\/(\d{15,})(?:[/?#]|$)/i);
+	return bare ? bare[1] : null;
 }
 
 /** Whether a URL is an X post worth handing to yt-dlp. */
@@ -1846,9 +1857,27 @@ export interface TweetMediaDetail {
 	video_info?: { variants?: TweetVariant[] };
 }
 
+/** An X Article carried by a post: the long-form feature, not the post's own
+ *  words. X keeps the body behind a login and answers a logged-out read with a
+ *  404, so the embed payload hands over only its shell: the title, the cover
+ *  picture, an opening preview of the words, and the id its /i/article/ link is
+ *  built from. That shell is the whole of an article a capture reaches without
+ *  the reader's own X session, so all of it is kept. */
+export interface TweetArticle {
+	title?: string;
+	/** The article's opening, cut off by X where the login wall begins. */
+	preview_text?: string;
+	/** The article's own id, distinct from the post's, and the one the
+	 *  /i/article/ link is built from. */
+	rest_id?: string;
+	cover_media?: { media_info?: { original_img_url?: string } };
+}
+
 export interface TweetEmbed extends TweetEmbedBase {
 	favorite_count?: number;
 	conversation_count?: number;
+	/** The X Article this post holds up, when it is a teaser for one. */
+	article?: TweetArticle;
 	/** Present when the post carries video. A post with no words that has one is
 	 *  a capture waiting on yt-dlp, not an empty post, and the two are worth
 	 *  telling apart when explaining why nothing was captured. */
@@ -1999,12 +2028,35 @@ export interface TweetRead {
 	media?: PostMedia[];
 }
 
+/** An X Article rendered down to the part of it a logged-out capture can reach:
+ *  its title, an opening preview of the body, and a line naming where the rest
+ *  is, which X keeps behind a login. Null when the payload carries no article.
+ *  The cover picture is saved as media, not written here. */
+export function articleBlock(a: TweetArticle | undefined): string | null {
+	if (!a) return null;
+	const title = (a.title ?? "").trim();
+	const preview = (a.preview_text ?? "").trim();
+	if (!title && !preview) return null;
+	const lines: string[] = [];
+	if (title) lines.push(`**${title}**`);
+	// the preview stops where X cut it, mid-sentence, so it trails off into an
+	// ellipsis: the words continue, the article is not over
+	if (preview) lines.push(preview.replace(/\s+$/, "") + "…");
+	// the id builds the /i/article/ link. The post's words carry a t.co to the
+	// same place, but a bare shortener says nothing about what waits there
+	const id = (a.rest_id ?? "").trim();
+	const tail = "This is the opening of an X Article; X shows the rest only to a signed-in reader";
+	lines.push(id ? `_${tail}: https://x.com/i/article/${id}_` : `_${tail}._`);
+	return lines.join("\n\n");
+}
+
 /** A post's words plus the context that makes them mean something.
  *
  *  The parts read in the order the conversation happened: what was being
- *  answered, then the post itself, then whatever it holds up to look at. The
- *  title comes from the post's OWN words, never the context, so a note is filed
- *  under what its author said rather than under what they were quoting.
+ *  answered, then the post itself, then whatever it holds up to look at, an X
+ *  Article included. The title comes from the article when there is one, else
+ *  the post's OWN words, never the context, so a note is filed under what its
+ *  author wrote rather than under what they were quoting.
  *
  *  A post with no words at all still returns, with empty text: the payload named
  *  its author and counted its likes, so it was read, and reporting it unread
@@ -2015,11 +2067,18 @@ export function parseTweetEmbed(j: TweetEmbed): TweetRead | null {
 	const parent = quotedBlock(j.parent, "In reply to");
 	const quoted = quotedBlock(j.quoted_tweet, "Quoting");
 	const media = tweetMedia(j);
-	if (!own && !parent && !quoted && !(j.text ?? "").trim() && !j.user && !media.length) return null;
-	const text = [parent, own, quoted].filter(Boolean).join("\n\n");
+	// an X Article's cover is the post's headline picture, saved like any media
+	// so it embeds in the note; its title and preview join the words below
+	const cover = (j.article?.cover_media?.media_info?.original_img_url ?? "").trim();
+	if (cover && !media.some((m) => m.url === cover)) media.unshift({ kind: "photo", url: cover });
+	const article = articleBlock(j.article);
+	if (!own && !parent && !quoted && !article && !(j.text ?? "").trim() && !j.user && !media.length) return null;
+	const text = [parent, own, quoted, article].filter(Boolean).join("\n\n");
 	const author = (j.user?.name ?? "").trim();
 	const handle = (j.user?.screen_name ?? "").trim();
-	const info: MediaInfo = { title: postTitleFromText(own || text, handle ? `Post from @${handle}` : "Post"), site: "X" };
+	// the article's own title names the note better than a teaser tweet does
+	const atitle = (j.article?.title ?? "").trim();
+	const info: MediaInfo = { title: postTitleFromText(atitle || own || text, handle ? `Post from @${handle}` : "Post"), site: "X" };
 	if (author) info.author = author;
 	if (handle) {
 		info.handle = `@${handle}`;

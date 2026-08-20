@@ -390,7 +390,12 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(xStatusId("https://x.com/elonmusk"), null, "a profile URL is not a post");
 	eq(xStatusId("https://notx.com/a/status/1"), null, "a lookalike host is rejected");
 	eq(xStatusId("https://www.youtube.com/watch?v=e8CW4_yU5Ko"), null, "a YouTube URL is not an X post");
-	ok(isXUrl("https://x.com/a/status/1") && !isXUrl("https://example.com"), "isXUrl follows xStatusId");
+	eq(xStatusId("https://x.com/2089950222248226816"), "2089950222248226816", "the bare-id form with no /status/ still yields the id");
+	eq(xStatusId("https://twitter.com/2089950222248226816"), "2089950222248226816", "the legacy host's bare-id form parses");
+	eq(xStatusId("https://x.com/2089950222248226816?s=20"), "2089950222248226816", "a bare-id form keeps its id past a tracking query");
+	eq(xStatusId("https://x.com/12345"), null, "a short number is not a status id, since a handle can be numeric");
+	eq(xStatusId("https://x.com/i/lists/2089950222248226816"), null, "a bare id under /i/lists/ is a list, not a post");
+	ok(isXUrl("https://x.com/a/status/1") && isXUrl("https://x.com/2089950222248226816") && !isXUrl("https://example.com"), "isXUrl follows xStatusId, the bare-id form included");
 
 	eq(postTitleFromText("Hello  world\nagain", "fb"), "Hello world again", "newlines and runs of spaces collapse");
 	eq(postTitleFromText("Real text https://t.co/CWSuWNFwQr", "fb"), "Real text", "a t.co tracker is dropped from the title");
@@ -636,6 +641,42 @@ eq(youtubeVideoId("https://example.com/nope"), null, "non-youtube urls yield nul
 	eq(vid.info.title, "Post from @elonmusk", "the title falls back to the author, as it already did");
 	eq(vid.info.likes, 105510, "the counts are still read off the payload");
 	eq(parseTweetEmbed({ text: "Just words", user: { screen_name: "a" } }).hasVideo, undefined, "a text post reports no video rather than false");
+
+	// --- an X Article a post is a teaser for ---
+	// X keeps the body behind a login, so the reach is the title, the cover, and
+	// an opening preview. All three are kept, and the note says the rest is on X.
+	{
+		const { articleBlock } = require("../src/pipeline");
+		const art = {
+			title: "How To Build a One-Person Company Using Grok Bot",
+			preview_text: "You are running a one-person company.\nYou find the leads. Write the outreach.",
+			rest_id: "2089950222248226816",
+			cover_media: { media_info: { original_img_url: "https://pbs.twimg.com/media/HQEH8cGbkAArdwr.jpg" } },
+		};
+		const block = articleBlock(art);
+		ok(block.includes("**How To Build a One-Person Company Using Grok Bot**"), "the article block leads with the title in bold");
+		ok(block.includes("You are running a one-person company."), "the article block carries the preview words");
+		ok(block.trimEnd().includes("…"), "the preview trails off, since X cut it mid-sentence");
+		ok(block.includes("https://x.com/i/article/2089950222248226816"), "the block links the full article, built from its id");
+		eq(articleBlock(undefined), null, "no article, no block");
+		eq(articleBlock({}), null, "an article with neither title nor preview yields no block");
+		ok(!articleBlock({ preview_text: "words" }).includes("https://x.com/i/article/"), "an article with no id still previews, just without the link");
+
+		const emb = {
+			text: "Grok Bot is the best AI agent right now https://t.co/4gzbtLmVbr",
+			created_at: "2026-08-19T12:00:00.000Z",
+			favorite_count: 3823,
+			conversation_count: 171,
+			user: { name: "Rahul", screen_name: "sairahul1" },
+			entities: { media: [] },
+			article: art,
+		};
+		const read = parseTweetEmbed(emb);
+		ok(read.info.title.includes("One-Person Company"), "the note is filed under the article's title, not the teaser tweet's words");
+		ok(read.text.includes("Grok Bot is the best AI agent right now"), "the teaser tweet's own words are still kept");
+		ok(read.text.includes("You are running a one-person company."), "and the article preview is kept alongside them");
+		ok(read.media && read.media[0] && read.media[0].url === "https://pbs.twimg.com/media/HQEH8cGbkAArdwr.jpg" && read.media[0].kind === "photo", "the article cover leads the post's saved pictures");
+	}
 
 	// --- the pictures a post is actually about ---
 	// A wordless post is not an empty post: its content is the picture, and a note
