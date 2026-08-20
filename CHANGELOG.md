@@ -2,6 +2,17 @@
 
 All notable changes to Power Assistant (formerly Power Capture). Dates are when the version was cut.
 
+## 1.93.0
+
+### Added
+
+- **A post that is a teaser for an X Article now captures the article too.** The note is filed under the article's own title, its cover image is saved and embedded beside the post's words, and the opening of the body is kept below them. X serves the full article only to a signed-in reader and answers everyone else with a 404, so the note keeps the opening X does hand over and says plainly that the rest is on X, with a link to it.
+
+### Fixed
+
+- **A bare `x.com/<id>` link, with no `/status/` and no handle, now captures.** yt-dlp does not recognize that shape and falls to its generic reader, which fetches the page and is handed a 404, and the capture ended there with that raw error. The id is now read from the bare link the same as from a full one, and any yt-dlp trouble on an X post drops to X's own reader, which needs no yt-dlp at all.
+- **An X post that genuinely cannot be read now says so.** A deleted post, a suspended account, or a link missing the part that names the post used to end in yt-dlp's generic-reader 404. The note now says the post could not be read, and why, rather than passing the error along.
+
 ## 1.92.4
 
 ### Changed
