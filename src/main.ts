@@ -1646,8 +1646,12 @@ export default class PowerAssistantPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, af) => {
 				if (af instanceof TFolder) {
-					// only offered where there is something to do: a folder of ordinary
-					// notes should not grow a Power Assistant item
+					// capture straight into the folder you clicked, bypassing the
+					// per-type default folder; offered on every folder, since any
+					// folder is a place a capture can go
+					this.addCaptureSubmenu(menu, af.path);
+					// re-extract is only offered where there is something to do: a
+					// folder of ordinary notes should not grow that item
 					if (!this.capturesIn(af, true).length) return;
 					menu.addItem((i) =>
 						i
@@ -1692,6 +1696,9 @@ export default class PowerAssistantPlugin extends Plugin {
 				if (af.extension !== "md") return;
 				// any note can be emailed, so this sits above the capture-only gate
 				menu.addItem((i) => i.setTitle("Email this page…").setIcon("mail").onClick(() => void this.sharePage(af)));
+				// point at a note and the capture files into the folder that note
+				// lives in, beside it, rather than in the default capture folder
+				this.addCaptureSubmenu(menu, af.parent?.path ?? "");
 				const fm = this.app.metadataCache.getFileCache(af)?.frontmatter as { type?: string; tags?: unknown } | undefined;
 				if (!isCaptureNote(fm)) return;
 				// only a captured post has counts to re-read, so this is offered on one
@@ -6497,6 +6504,34 @@ export default class PowerAssistantPlugin extends Plugin {
 	 *  that is in the way is asked what it captured. The same link stops the
 	 *  capture, as before; anything else gets -2, -3, … the way two meetings on
 	 *  one day do. */
+	/** A "Capture" submenu whose items file into `dest` instead of the per-type
+	 *  default folder. Added to the folder and note context menus so a capture
+	 *  can land where you are pointing. `dest` is a folder path: the folder you
+	 *  clicked, or the folder a clicked note lives in. Falls back to a standalone
+	 *  flyout on the odd build whose Menu has no setSubmenu (same shim Power
+	 *  Explorer uses), so the items are always reachable. */
+	private addCaptureSubmenu(menu: Menu, dest: string) {
+		const items: { title: string; icon: string; run: () => void }[] = [
+			{ title: "Capture a web page…", icon: "globe", run: () => new LinkModal(this.app, this, "web", dest).open() },
+			{ title: "Capture a YouTube video…", icon: "square-play", run: () => new YoutubeModal(this.app, this, dest).open() },
+			{ title: "Capture an X post…", icon: "at-sign", run: () => new XModal(this.app, this, dest).open() },
+		];
+		const fill = (m: Menu) => {
+			for (const it of items) m.addItem((s) => s.setTitle(it.title).setIcon(it.icon).onClick(it.run));
+		};
+		menu.addItem((item) => {
+			item.setTitle("Capture").setIcon("download");
+			const sub = (item as { setSubmenu?: () => Menu }).setSubmenu?.();
+			if (sub) fill(sub);
+			else
+				item.onClick((e) => {
+					const m = new Menu();
+					fill(m);
+					m.showAtMouseEvent(e as MouseEvent);
+				});
+		});
+	}
+
 	private captureNotePath(folder: string, base: string, url: string): { path: string } | { duplicate: TFile } {
 		const at = (name: string) => this.app.vault.getAbstractFileByPath(normalizePath(`${folder}/${name}`));
 		const sitting = at(base);
@@ -7156,7 +7191,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		}
 	}
 
-	async captureYoutube(url: string) {
+	async captureYoutube(url: string, dest?: string) {
 		url = ensureUrlScheme(url);
 		const s = this.settings;
 		try {
@@ -7242,7 +7277,9 @@ export default class PowerAssistantPlugin extends Plugin {
 			// refused, which is how an extraction can sit in the usage ledger with no
 			// note anywhere to show for it.
 			const date = today();
-			const folder = cleanFolderPath(s.youtubeFolder) || s.outputFolder;
+			// a folder handed in by the context menu wins over the per-type setting:
+			// it is the whole point of capturing from a right-click on a folder
+			const folder = dest ? normalizePath(dest) : cleanFolderPath(s.youtubeFolder) || s.outputFolder;
 			const where = this.captureNotePath(folder, renderMeetingFilename(s.youtubeFilename, title, date), url);
 			if ("duplicate" in where) {
 				new Notice(`Power Assistant: this video is already captured (see ${where.duplicate.basename}.`, 8000);
@@ -8007,7 +8044,7 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Capture any site yt-dlp handles. One method serves all of them because
 	 *  yt-dlp normalizes its metadata across every extractor; the site only
 	 *  decides the label and where the note files itself. */
-	async captureMedia(url: string) {
+	async captureMedia(url: string, dest?: string) {
 		url = ensureUrlScheme(url);
 		const s = this.settings;
 		try {
@@ -8098,7 +8135,7 @@ export default class PowerAssistantPlugin extends Plugin {
 					// Every other site: hand it to the page reader, which is what a link
 					// with nothing to play usually wanted anyway.
 					new Notice(absent ? "Power Assistant: yt-dlp is not installed, so reading it as a page instead…" : "Power Assistant: nothing to play there, reading it as a page instead…", 8000);
-					return this.captureWeb(url);
+					return this.captureWeb(url, dest);
 				}
 				// the words are saved either way, but a post carrying video quietly loses
 				// its transcript here, and the user is owed the reason. A post with no
@@ -8145,7 +8182,7 @@ export default class PowerAssistantPlugin extends Plugin {
 			}
 
 			const label = info.site ?? "";
-			const folder = renderFolder(s.mediaFolder, label) || s.outputFolder;
+			const folder = dest ? normalizePath(dest) : renderFolder(s.mediaFolder, label) || s.outputFolder;
 			// checked before the download rather than after it: transcribing spends
 			// credits worth keeping for a note that does not exist yet
 			const where = this.captureNotePath(folder, renderMeetingFilename(s.mediaFilename, info.title, today(), label), url);
@@ -8298,14 +8335,14 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Capture a web page as an article note. No audio and no yt-dlp, so this
 	 *  costs no transcription at all: the only paid step is the extraction, and
 	 *  even that is optional. */
-	async captureWeb(url: string) {
+	async captureWeb(url: string, dest?: string) {
 		url = ensureUrlScheme(url);
 		try {
 			new Notice("Power Assistant: reading the page…");
 			// MSN is read through its own API; the note then records the original
 			// article rather than the feed link that led to it
 			const msn = await this.readMsn(url);
-			if (msn) return this.writeArticle(msn.canonical ?? url, msn.title, msn.markdown, msn.info);
+			if (msn) return this.writeArticle(msn.canonical ?? url, msn.title, msn.markdown, msn.info, dest);
 			let html = "";
 			try {
 				// a browser-ish User-Agent, because a fair number of publishers serve a
@@ -8333,7 +8370,7 @@ export default class PowerAssistantPlugin extends Plugin {
 				new Notice("Power Assistant: could not find an article on that page. If it is a video, run the capture again and choose Video.", 12000);
 				return;
 			}
-			await this.writeArticle(url, read.title, read.markdown, read.info);
+			await this.writeArticle(url, read.title, read.markdown, read.info, dest);
 		} catch (e) {
 			console.error("Power Assistant:", e);
 			new Notice("Power Assistant failed: " + (e instanceof Error ? e.message : String(e)), 8000);
@@ -8341,11 +8378,12 @@ export default class PowerAssistantPlugin extends Plugin {
 	}
 
 	/** File a read article, however it was read: the site's folder and filename
-	 *  patterns, the duplicate check, then the note itself. */
-	private async writeArticle(url: string, title: string, markdown: string, info: WebInfo) {
+	 *  patterns, the duplicate check, then the note itself. `dest` overrides the
+	 *  site folder when a capture was launched from a right-click on a folder. */
+	private async writeArticle(url: string, title: string, markdown: string, info: WebInfo, dest?: string) {
 		const s = this.settings;
 		const site = info.site ?? "";
-		const folder = renderFolder(s.webFolder, site) || s.outputFolder;
+		const folder = dest ? normalizePath(dest) : renderFolder(s.webFolder, site) || s.outputFolder;
 		const where = this.captureNotePath(folder, renderMeetingFilename(s.webFilename, title, today(), site), url);
 		if ("duplicate" in where) {
 			new Notice(`Power Assistant: this page is already captured (see ${where.duplicate.basename}.`, 8000);
@@ -8368,12 +8406,12 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** The one front door: send a pasted link wherever it belongs. `force` is the
 	 *  dialog's override, for the blog that is really a video and the video site
 	 *  the router has never heard of. */
-	async captureLink(url: string, force: CaptureRoute | "auto" = "auto") {
+	async captureLink(url: string, force: CaptureRoute | "auto" = "auto", dest?: string) {
 		url = ensureUrlScheme(url);
 		const route = force === "auto" ? routeFor(url) : force;
-		if (route === "youtube") return this.captureYoutube(url);
-		if (route === "media") return this.captureMedia(url);
-		return this.captureWeb(url);
+		if (route === "youtube") return this.captureYoutube(url, dest);
+		if (route === "media") return this.captureMedia(url, dest);
+		return this.captureWeb(url, dest);
 	}
 
 	/* ---------------- ask-your-vault ---------------- */
@@ -13269,7 +13307,7 @@ class CorrectionModal extends Modal {
 class YoutubeModal extends Modal {
 	private url = "";
 
-	constructor(app: App, private plugin: PowerAssistantPlugin) {
+	constructor(app: App, private plugin: PowerAssistantPlugin, private dest?: string) {
 		super(app);
 	}
 
@@ -13310,7 +13348,7 @@ class YoutubeModal extends Modal {
 			return;
 		}
 		this.close();
-		void this.plugin.captureYoutube(url);
+		void this.plugin.captureYoutube(url, this.dest);
 	}
 
 	onClose() {
@@ -13321,7 +13359,7 @@ class YoutubeModal extends Modal {
 class XModal extends Modal {
 	private url = "";
 
-	constructor(app: App, private plugin: PowerAssistantPlugin) {
+	constructor(app: App, private plugin: PowerAssistantPlugin, private dest?: string) {
 		super(app);
 	}
 
@@ -13362,7 +13400,7 @@ class XModal extends Modal {
 			return;
 		}
 		this.close();
-		void this.plugin.captureMedia(url);
+		void this.plugin.captureMedia(url, this.dest);
 	}
 
 	onClose() {
@@ -13378,7 +13416,7 @@ class LinkModal extends Modal {
 	private url = "";
 	private mode: CaptureRoute | "auto";
 
-	constructor(app: App, private plugin: PowerAssistantPlugin, mode: CaptureRoute | "auto" = "auto") {
+	constructor(app: App, private plugin: PowerAssistantPlugin, mode: CaptureRoute | "auto" = "auto", private dest?: string) {
 		super(app);
 		this.mode = mode;
 	}
@@ -13441,7 +13479,7 @@ class LinkModal extends Modal {
 			return;
 		}
 		this.close();
-		void this.plugin.captureLink(url, this.mode);
+		void this.plugin.captureLink(url, this.mode, this.dest);
 	}
 
 	onClose() {
