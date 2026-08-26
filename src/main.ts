@@ -1068,6 +1068,9 @@ export default class PowerAssistantPlugin extends Plugin {
 	/** Debounce + re-entrancy state for the person-page auto-refresh. */
 	private peopleRefreshTimer: number | null = null;
 	private refreshingPeople = false;
+	/** One trailing repaint for note-header actions and edited stamps. Metadata
+	 *  catch-up can otherwise rebuild the active phone page for every file. */
+	private activeChromeTimer: number | null = null;
 	/** Documents currently being OCR'd/filed, keyed by their original path. */
 	private docsInFlight = new Set<string>();
 	/** Session generation counter: bumped when a recording starts and when a
@@ -1635,7 +1638,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		// matters for a note just captured: its frontmatter reaches the cache after
 		// the pane already opened it, and the button would otherwise wait for the
 		// next time the note came forward.
-		const syncActions = () => this.syncPostActions();
+		const syncActions = () => this.queueActiveChromeRefresh();
 		this.registerEvent(this.app.workspace.on("active-leaf-change", syncActions));
 		this.registerEvent(this.app.workspace.on("file-open", syncActions));
 		this.registerEvent(this.app.workspace.on("layout-change", syncActions));
@@ -1767,11 +1770,11 @@ export default class PowerAssistantPlugin extends Plugin {
 		// the last-edited stamp: repainted whenever the page it belongs to could
 		// have changed under it, and re-timed on the minute so "3 minutes ago"
 		// does not sit there being wrong until the note is reopened
-		this.registerEvent(this.app.workspace.on("file-open", () => this.refreshEditedStamps()));
-		this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshEditedStamps()));
-		this.registerEvent(this.app.metadataCache.on("changed", () => this.refreshEditedStamps()));
-		this.registerEvent(this.app.vault.on("modify", () => this.refreshEditedStamps()));
-		this.app.workspace.onLayoutReady(() => this.refreshEditedStamps());
+		this.registerEvent(this.app.workspace.on("file-open", () => this.queueActiveChromeRefresh()));
+		this.registerEvent(this.app.workspace.on("layout-change", () => this.queueActiveChromeRefresh()));
+		this.registerEvent(this.app.metadataCache.on("changed", () => this.queueActiveChromeRefresh()));
+		this.registerEvent(this.app.vault.on("modify", () => this.queueActiveChromeRefresh()));
+		this.app.workspace.onLayoutReady(() => this.queueActiveChromeRefresh());
 		this.registerInterval(window.setInterval(() => this.refreshEditedStamps(), 60_000));
 
 		// Register watchers after layout-ready: vault fires `create` for every
@@ -1794,15 +1797,28 @@ export default class PowerAssistantPlugin extends Plugin {
 				void this.sweepPending(true);
 			});
 			window.setTimeout(() => {
-				this.paintQueueStatus();
-				void this.sweepPending();
-			}, 8000);
-			this.registerInterval(window.setInterval(() => void this.sweepPending(), 120_000));
+				void this.afterMobileStartup(async () => {
+					this.paintQueueStatus();
+					await this.sweepPending();
+				});
+			}, Platform.isMobileApp ? 30_000 : 8000);
+			this.registerInterval(
+				window.setInterval(() => {
+					if (!Platform.isMobileApp || !this.mobileStartupSettling()) void this.sweepPending();
+				}, 120_000)
+			);
 			this.registerInterval(window.setInterval(() => this.paintQueueStatus(), 30_000));
 			// the rolling mail window: load once, then top up on a slow beat so
 			// recent email stays searchable without a note per message
-			window.setTimeout(() => void this.refreshMailWindow(), 12000);
-			this.registerInterval(window.setInterval(() => void this.refreshMailWindow(), 15 * 60_000));
+			window.setTimeout(
+				() => void this.afterMobileStartup(() => this.refreshMailWindow()),
+				Platform.isMobileApp ? 45_000 : 12000
+			);
+			this.registerInterval(
+				window.setInterval(() => {
+					if (!Platform.isMobileApp || !this.mobileStartupSettling()) void this.refreshMailWindow();
+				}, 15 * 60_000)
+			);
 			this.registerEvent(
 				this.app.vault.on("create", (af) => {
 					if (!(af instanceof TFile)) return;
@@ -1888,22 +1904,33 @@ export default class PowerAssistantPlugin extends Plugin {
 			this.register(() => {
 				if (this.peopleRefreshTimer != null) window.clearTimeout(this.peopleRefreshTimer);
 			});
-			void this.loadIndex()
-				.then(() => this.loadEmbeddings())
-				.then(() => this.syncIndex(false))
-				.then(() => {
-					// backfill embeddings for the assistant's notes, quietly, when on
-					if (this.semanticEnabled()) window.setTimeout(() => void this.syncEmbeddings(), 4000);
-				});
+			void this.waitForMobileStartup().then(async () => {
+				if (this.unloaded) return;
+				// Power Explorer already supplies the keyword index. Keep the local
+				// one only when it is the fallback, or when semantic vectors need its
+				// chunks; this avoids parsing and scanning the same vault twice.
+				if (this.sharedKeywordIndexCoversLocal()) return;
+				await this.loadIndex();
+				await this.loadEmbeddings();
+				await this.syncIndex(false);
+				// backfill embeddings for the assistant's notes, quietly, when on
+				if (this.semanticEnabled()) window.setTimeout(() => void this.syncEmbeddings(), 4000);
+			});
 			this.register(() => {
 				if (this.embedTimer) window.clearTimeout(this.embedTimer);
 			});
 			if (this.settings.autoWeeklyDigest) {
-				const t = window.setTimeout(() => void this.maybeAutoDigest(), 6000);
+				const t = window.setTimeout(
+					() => void this.afterMobileStartup(() => this.maybeAutoDigest()),
+					Platform.isMobileApp ? 45_000 : 6000
+				);
 				this.register(() => window.clearTimeout(t)); // don't fire on a torn-down plugin
 			}
 			if (this.settings.autoMorningBriefing) {
-				const t = window.setTimeout(() => void this.maybeAutoBriefing(), 8000);
+				const t = window.setTimeout(
+					() => void this.afterMobileStartup(() => this.maybeAutoBriefing()),
+					Platform.isMobileApp ? 45_000 : 8000
+				);
 				this.register(() => window.clearTimeout(t));
 			}
 		});
@@ -1914,6 +1941,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		// floating bar wired to this dead instance, or a live mic stream. The
 		// crash-safe partial stays on disk and the next launch recovers the audio.
 		this.unloaded = true;
+		if (this.activeChromeTimer != null) window.clearTimeout(this.activeChromeTimer);
 		// our stamps outlive us in the DOM otherwise, and with the stylesheet
 		// gone they would sit on the page as unstyled stray text
 		for (const el of Array.from(document.querySelectorAll(".ptc-edited"))) el.remove();
@@ -4315,6 +4343,45 @@ export default class PowerAssistantPlugin extends Plugin {
 		return pc?.running === true;
 	}
 
+	/** A phone's startup grace plus the sync itself. The optional structural
+	 *  read keeps Assistant independent when Power Connect is not installed. */
+	private mobileStartupSettling(): boolean {
+		const pc = (
+			this.app as unknown as {
+				plugins?: { plugins?: Record<string, { running?: boolean; mobileStartupPending?: boolean }> };
+			}
+		).plugins?.plugins?.powerconnect;
+		return pc?.running === true || pc?.mobileStartupPending === true;
+	}
+
+	private async waitForMobileStartup() {
+		if (!Platform.isMobileApp) return;
+		const started = Date.now();
+		while (!this.unloaded && this.mobileStartupSettling() && Date.now() - started < 30 * 60_000) {
+			await sleep(750);
+		}
+		if (!this.unloaded) await sleep(750);
+	}
+
+	private async afterMobileStartup(work: () => unknown | Promise<unknown>) {
+		await this.waitForMobileStartup();
+		if (!this.unloaded) await work();
+	}
+
+	/** Power Explorer is the primary keyword index when it is enabled. The
+	 *  Assistant keeps its own corpus only for fallback or semantic vectors. */
+	private sharedKeywordIndexCoversLocal(): boolean {
+		if (this.semanticEnabled()) return false;
+		const pe = (
+			this.app as unknown as {
+				plugins?: {
+					plugins?: Record<string, { settings?: { searchEnabled?: boolean }; search?: { retrieve?: unknown } }>;
+				};
+			}
+		).plugins?.plugins?.powerexplorer;
+		return pe?.settings?.searchEnabled === true && typeof pe.search?.retrieve === "function";
+	}
+
 	/** Regenerate every GENERATED person page in the People folder from the
 	 *  vault's current state. Pages whose content would not change are left
 	 *  untouched (no modify event, no sync churn); pages without the
@@ -4450,7 +4517,7 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (wrote) {
 			this.settings.lastDigestWeek = week;
 			await this.saveSettings();
-			new Notice("Power Assistant: this week's meeting digest is ready.");
+			if (!Platform.isMobileApp) new Notice("Power Assistant: this week's meeting digest is ready.");
 		}
 	}
 
@@ -4537,7 +4604,9 @@ export default class PowerAssistantPlugin extends Plugin {
 		if (today === this.settings.lastBriefingDay) return;
 		this.settings.lastBriefingDay = today;
 		await this.saveSettings();
-		await this.morningBriefing(true);
+		// Automatic generation is background work. Opening the note here stole
+		// the active page several seconds after launch, most painfully on phones.
+		await this.morningBriefing(false);
 	}
 
 	/** The redaction config for share/export, from settings (+ the note's own
@@ -5268,6 +5337,22 @@ export default class PowerAssistantPlugin extends Plugin {
 			const view = leaf.view;
 			if (view instanceof MarkdownView) this.applyEditedStamp(view);
 		}
+	}
+
+	/** Active-note chrome follows the trailing edge of a metadata burst. On a
+	 *  phone it also waits for the remote apply to finish, so a hundred incoming
+	 *  notes produce one DOM update and never make the open note flash. */
+	private queueActiveChromeRefresh() {
+		if (this.activeChromeTimer != null) window.clearTimeout(this.activeChromeTimer);
+		this.activeChromeTimer = window.setTimeout(() => {
+			this.activeChromeTimer = null;
+			if (Platform.isMobileApp && this.mobileStartupSettling()) {
+				this.queueActiveChromeRefresh();
+				return;
+			}
+			this.syncPostActions();
+			this.refreshEditedStamps();
+		}, Platform.isMobileApp ? 500 : 50);
 	}
 
 	/** The views block for a generated base. With Power Bases installed that is
@@ -8430,6 +8515,7 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	private indexable(path: string): boolean {
 		if (!path.endsWith(".md")) return false;
+		if (this.sharedKeywordIndexCoversLocal()) return false;
 		return this.indexedFolders().some((f) => f === "/" || path === f || path.startsWith(f + "/"));
 	}
 
