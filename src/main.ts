@@ -14,7 +14,7 @@ import {
 	MarkdownView,
 	Menu,
 	Modal,
-	Notice,
+	Notice as ObsidianNotice,
 	Platform,
 	Plugin,
 	PluginSettingTab,
@@ -33,6 +33,16 @@ import {
 	type SettingDefinitionPage,
 	type SettingDefinitionRender,
 } from "obsidian";
+
+let pluginNoticesEnabled = () => true;
+
+class Notice extends ObsidianNotice {
+	constructor(message: string | DocumentFragment, duration?: number) {
+		super(message, duration);
+		if (!pluginNoticesEnabled()) this.hide();
+	}
+}
+
 import type { Correction, DeepgramResponse, DigestData, EvalScore, ExportModel, Frame, FrameSample, GraphEvent, LiveTurn, ParsedInvite, PersonData, SpeakerEmbedding, TurnEmbedding, TurnRef, UsageEvent, VoiceprintLibrary, WhisperXResponse } from "./pipeline";
 import { fetchCalendar, GraphError, pollToken, refreshTokens, sendMail, startDeviceCode } from "./graph";
 import { strFromU8, unzipSync } from "fflate";
@@ -149,7 +159,7 @@ const YOUTUBE_REACH_PROBE = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 /** The version of the CODE actually running, shown by the Show-running-version
  *  command; the Community-plugins list only shows what is on DISK, which
  *  diverges from the running instance until a real reload. Bump with manifest. */
-const PC_BUILD = "1.93.0";
+const PC_BUILD = "1.94.2";
 
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
@@ -767,6 +777,7 @@ interface PowerAssistantSettings {
 	ribbonMeeting: boolean;
 	ribbonBriefing: boolean;
 	ribbonAssistant: boolean;
+	showNotifications: boolean;
 }
 
 const DEFAULT_SETTINGS: PowerAssistantSettings = {
@@ -912,6 +923,7 @@ const DEFAULT_SETTINGS: PowerAssistantSettings = {
 	ribbonMeeting: true,
 	ribbonBriefing: true,
 	ribbonAssistant: true,
+	showNotifications: true,
 };
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1147,6 +1159,7 @@ export default class PowerAssistantPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		pluginNoticesEnabled = () => this.settings.showNotifications;
 		// before anything that records, captures, or sweeps: those all ask for a
 		// Node module and take null for an answer, which is the wrong answer on a
 		// desktop that simply had not finished loading them yet
@@ -14038,6 +14051,16 @@ class AssistantSettingTab extends PluginSettingTab {
 	private buildPages(): Page[] {
 		const s = this.plugin.settings;
 		const save = () => this.save();
+		const general: Row[] = [
+			{
+				name: "Show notifications",
+				desc: "Show popup notices from Power Assistant. Turn off to keep Obsidian clear, especially on phones.",
+				help: "When off, Power Assistant suppresses every popup notice, including progress, success, warning, and error notices.",
+				build: (st) => {
+					st.addToggle((t) => t.setValue(s.showNotifications).onChange((v) => ((s.showNotifications = v), save())));
+				},
+			},
+		];
 
 		// A Whisper server on your own machine needs no key, so an address that
 		// is plainly local counts as set up on its own.
@@ -15894,6 +15917,7 @@ class AssistantSettingTab extends PluginSettingTab {
 		];
 
 		return [
+			{ id: "general", label: "General", groups: [{ heading: "Notifications", rows: general }] },
 			{ id: "setup", label: "Setup", groups: setup },
 			{ id: "audio", label: "Audio", groups: audio },
 			{ id: "meetings", label: "Meetings", groups: meetings },
